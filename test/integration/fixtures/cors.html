@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>CORS fixture</title></head>
+<body>
+  <h1>CORS fixture</h1>
+  <p>Calls an API on another origin (localhost vs 127.0.0.1) with a custom header, which forces a CORS preflight.</p>
+  <script>
+    // The SPA-on-one-host, API-on-another shape. The fixture server sends no CORS headers,
+    // so these calls only succeed when a route answers them.
+    window.apiBase = location.origin.replace("127.0.0.1", "localhost");
+    window.callApi = (path, init = {}) =>
+      fetch(window.apiBase + path, { ...init, headers: { "x-trace-id": "sweep", ...(init.headers || {}) } })
+        .then(async (r) => ({ ok: true, status: r.status, body: await r.text() }))
+        .catch((e) => ({ ok: false, error: e.message }));
+  </script>
+</body>
+</html>

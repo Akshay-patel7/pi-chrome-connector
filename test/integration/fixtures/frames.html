@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Frames fixture</title></head>
+<body>
+  <h1>Frames fixture</h1>
+  <iframe id="same" name="same-origin-frame" src="/index.html" width="400" height="200"></iframe>
+  <!-- localhost vs 127.0.0.1 is a different origin: with site isolation this frame runs out of process -->
+  <iframe id="cross" name="cross-origin-frame" width="400" height="200"></iframe>
+  <script>
+    document.getElementById("cross").src = location.href.replace("127.0.0.1", "localhost").replace("frames.html", "index.html");
+  </script>
+</body>
+</html>

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Form fixture</title>
+  <style>
+    body { font-family: sans-serif; margin: 24px; }
+    .row { margin: 8px 0; }
+    #overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: none; align-items: center; justify-content: center; }
+    #overlay.open { display: flex; }
+    #modal { background: white; padding: 24px; }
+    #far { margin-top: 2000px; }
+    .card { padding: 12px; border: 1px solid #ccc; cursor: pointer; width: 200px; }
+  </style>
+</head>
+<body>
+  <h1>Form fixture</h1>
+  <form id="form" onsubmit="event.preventDefault(); document.getElementById('submitted').textContent = 'submitted:' + JSON.stringify(Object.fromEntries(new FormData(this).entries()));">
+    <div class="row"><label for="name">Name</label> <input id="name" name="name" type="text" placeholder="Your name" /></div>
+    <div class="row"><label for="email">Email</label> <input id="email" name="email" type="email" value="old@example.com" /></div>
+    <div class="row"><label for="bio">Bio</label> <textarea id="bio" name="bio"></textarea></div>
+    <div class="row"><label for="color">Favorite color</label>
+      <select id="color" name="color"><option value="">Pick</option><option value="red">Red</option><option value="green">Green</option><option value="blue">Blue</option></select></div>
+    <div class="row"><label><input id="agree" name="agree" type="checkbox" /> I agree</label></div>
+    <div class="row"><label><input name="plan" type="radio" value="free" /> Free</label> <label><input name="plan" type="radio" value="pro" /> Pro</label></div>
+    <div class="row"><label for="when">When</label> <input id="when" name="when" type="date" /></div>
+    <div class="row"><label for="qty">Quantity</label> <input id="qty" name="qty" type="number" value="1" /></div>
+    <div class="row"><label for="file">File</label> <input id="file" name="file" type="file" /></div>
+    <div class="row"><button id="submit" type="submit">Submit form</button> <button type="button" id="open-modal">Open modal</button></div>
+  </form>
+  <p id="submitted"></p>
+  <p id="keys"></p>
+  <div id="editor" contenteditable="true" style="border:1px solid #999; padding: 6px; width: 300px;">editable text</div>
+  <div id="card" class="card">Clickable card (div with click handler)</div>
+  <p id="card-result"></p>
+  <div id="hover-target" style="width:120px;height:40px;background:#eee">Hover me</div>
+  <p id="hover-result"></p>
+  <div id="scroller" style="height:120px;overflow:auto;border:1px solid #999;width:300px"><div style="height:1000px">tall content<p id="deep" style="margin-top:800px">deep item</p></div></div>
+  <p id="far">Far away paragraph</p>
+  <button id="far-button">Far button</button>
+  <p id="far-result"></p>
+  <div id="overlay"><div id="modal"><p>Modal is open</p><button id="close-modal">Close modal</button></div></div>
+  <!-- A "responsive sidebar": re-mounts (new input node, state lost) whenever the window resizes. -->
+  <div id="sidebar"><input id="sidebar-search" aria-label="Sidebar search" placeholder="Filter" /></div>
+  <!-- A row whose label repeats dnd-kit style instructions on many items. -->
+  <ul id="draggables">
+    <li><button aria-describedby="dnd-help">Row one</button></li>
+    <li><button aria-describedby="dnd-help">Row two</button></li>
+    <li><button aria-describedby="dnd-help">Row three</button></li>
+  </ul>
+  <div id="dnd-help" hidden>To pick up a draggable item, press the space bar. While dragging, use the arrow keys to move the item.</div>
+  <div id="empty-clickables"><div class="anchor"></div><div class="anchor"></div><div class="anchor"></div></div>
+  <!-- A collapsed drawer: laid out and partly on screen, but inert (like a closed app sidebar). -->
+  <div id="drawer" inert style="position:fixed;left:-150px;top:100px;width:200px;background:#eef"><input id="drawer-input" aria-label="Drawer search" placeholder="Filter drawer" style="width:190px" /></div>
+  <script>
+    window.sidebarMounts = 0;
+    function mountSidebar() {
+      window.sidebarMounts += 1;
+      const sidebar = document.getElementById("sidebar");
+      sidebar.innerHTML = '<input id="sidebar-search" aria-label="Sidebar search" placeholder="Filter" />';
+    }
+    window.addEventListener("resize", mountSidebar);
+    // Global listeners like Radix dismissable layers and dnd-kit sensors make <body> "clickable".
+    document.body.addEventListener("click", () => {});
+    for (const anchor of document.querySelectorAll("#empty-clickables .anchor")) anchor.addEventListener("click", () => {});
+    document.getElementById("card").addEventListener("click", () => { document.getElementById("card-result").textContent = "card clicked"; });
+    document.getElementById("hover-target").addEventListener("mouseenter", () => { document.getElementById("hover-result").textContent = "hovered"; });
+    document.getElementById("far-button").addEventListener("click", () => { document.getElementById("far-result").textContent = "far clicked"; });
+    document.getElementById("open-modal").addEventListener("click", () => document.getElementById("overlay").classList.add("open"));
+    document.getElementById("close-modal").addEventListener("click", () => document.getElementById("overlay").classList.remove("open"));
+    document.addEventListener("keydown", (e) => {
+      const mods = [e.ctrlKey && "Control", e.metaKey && "Meta", e.shiftKey && "Shift", e.altKey && "Alt"].filter(Boolean).join("+");
+      document.getElementById("keys").textContent += (mods ? mods + "+" : "") + e.key + "(" + e.code + ") ";
+    });
+    document.getElementById("name").addEventListener("input", (e) => { document.body.dataset.lastInput = e.target.value; });
+    document.getElementById("file").addEventListener("change", (e) => { document.body.dataset.file = [...e.target.files].map((f) => f.name + ":" + f.size).join(","); });
+  </script>
+</body>
+</html>

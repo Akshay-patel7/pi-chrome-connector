@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Telemetry fixture</title></head>
+<body>
+  <h1>Telemetry fixture</h1>
+  <script>
+    // A worker from a blob: URL; Chrome reports the request but not always its completion.
+    const worker = new Worker(URL.createObjectURL(new Blob(["self.onmessage = () => {};"], { type: "text/javascript" })));
+    worker.postMessage("hi");
+    // "Telemetry" the tests block with a route (stands in for an ad blocker) and one real API call.
+    fetch("/telemetry/rum").catch(() => {});
+    fetch("/telemetry/events").catch(() => {});
+    fetch("/api/json?real=1").then((r) => r.json()).then(() => { document.body.dataset.done = "1"; });
+  </script>
+</body>
+</html>

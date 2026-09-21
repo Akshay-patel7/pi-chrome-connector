@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Console fixture</title></head>
+<body>
+  <h1>Console fixture</h1>
+  <script>
+    console.log("plain log", 42, { a: 1, b: "two", nested: { c: [1, 2, 3] } });
+    console.info("info message");
+    console.warn("warning message");
+    console.error("error message", new Error("logged error"));
+    console.debug("debug message");
+    fetch("/api/notfound").catch(() => {});
+    setTimeout(() => { throw new Error("uncaught after load"); }, 10);
+  </script>
+</body>
+</html>

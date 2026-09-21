@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Responsive fixture</title>
+  <style>body{margin:0;font-family:sans-serif} .tall{height:1800px;background:linear-gradient(#fff,#ccd)}</style>
+</head>
+<body>
+  <h1 id="title">Responsive fixture</h1>
+  <p id="w"></p>
+  <div class="tall">tall content</div>
+  <script>document.getElementById('w').textContent = 'layout width ' + document.documentElement.clientWidth;</script>
+</body>
+</html>

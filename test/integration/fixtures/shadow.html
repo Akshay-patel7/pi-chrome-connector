@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Shadow DOM fixture</title></head>
+<body>
+  <h1>Shadow DOM fixture</h1>
+  <fancy-card id="card"><span slot="label">Slotted label</span></fancy-card>
+  <p id="result">nothing clicked</p>
+  <script>
+    class FancyCard extends HTMLElement {
+      constructor() {
+        super();
+        const root = this.attachShadow({ mode: "open" });
+        root.innerHTML = '<style>button{padding:6px}</style><p id="inner">Inside the shadow root</p><button id="shadow-button">Shadow button</button><slot name="label"></slot>';
+        root.getElementById("shadow-button").addEventListener("click", () => { document.getElementById("result").textContent = "shadow button clicked"; });
+      }
+    }
+    customElements.define("fancy-card", FancyCard);
+  </script>
+</body>
+</html>

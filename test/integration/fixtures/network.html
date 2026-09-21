@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Network fixture</title></head>
+<body>
+  <h1>Network fixture</h1>
+  <button id="refetch">Fetch again</button>
+  <pre id="out"></pre>
+  <img src="/missing.png" alt="missing image" />
+  <script>
+    async function run() {
+      const out = document.getElementById("out");
+      const json = await fetch("/api/json?x=1").then((r) => r.json());
+      out.textContent += JSON.stringify(json) + "\n";
+      await fetch("/api/fail").catch(() => {});
+      const echo = await fetch("/api/echo", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ hello: "world" }) }).then((r) => r.json());
+      out.textContent += JSON.stringify(echo) + "\n";
+      document.body.dataset.done = "1";
+    }
+    document.getElementById("refetch").addEventListener("click", () => fetch("/api/json?click=1"));
+    run();
+  </script>
+</body>
+</html>

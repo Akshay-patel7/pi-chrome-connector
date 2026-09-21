@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Slow form fixture</title></head>
+<body>
+  <h1>Slow form fixture</h1>
+  <!-- The server holds this POST for 700ms, far longer than the post-click settle window. -->
+  <form method="post" action="/slow-form">
+    <input name="who" value="pi-connector" />
+    <button id="send" type="submit">Send order</button>
+  </form>
+</body>
+</html>
