@@ -20,8 +20,9 @@ import { registerEvaluateTool } from "./tools/evaluate.ts";
 import { registerInteractionTools } from "./tools/interact.ts";
 import { registerNavigateTool } from "./tools/navigate.ts";
 import { registerScreenshotTool } from "./tools/screenshot.ts";
+import type { ToolServices } from "./tools/shared.ts";
 import { registerSnapshotTools } from "./tools/snapshot.ts";
-import { registerStatusTool } from "./tools/status.ts";
+import { registerChromeLoaderTool, registerStatusTool } from "./tools/status.ts";
 import { registerTabsTool } from "./tools/tabs.ts";
 import { registerWaitTool } from "./tools/wait.ts";
 
@@ -42,7 +43,9 @@ export function createChromeConnector(pi: ExtensionAPI, options: ChromeConnector
 	const config = options.config ?? loadConfig(getAgentDir());
 	const launcher = options.launcher ?? createSystemLauncher({ app: config.chromeApp, args: config.launchArgs });
 	const connector = new Connector(config, launcher);
-	const services = { connector };
+	// Deferred tools are registered but not declared to the model; the `chrome` tool declares them on
+	// first use, so the 27 declarations (~6k tokens) are not in every request of every session.
+	const services: ToolServices = { connector, exposure: config.lazyTools ? "deferred" : "direct", toolNames: [] };
 
 	connector.on("stateChanged", (state) => pi.appendEntry(STATE_ENTRY_TYPE, state));
 
@@ -75,6 +78,7 @@ export function createChromeConnector(pi: ExtensionAPI, options: ChromeConnector
 	registerDialogTool(pi, services);
 	registerDevtoolsTools(pi, services, config.artifactDir);
 	registerEmulateTool(pi, services);
+	if (config.lazyTools) registerChromeLoaderTool(pi, services);
 
 	registerChromeCommand(pi, {
 		connector,

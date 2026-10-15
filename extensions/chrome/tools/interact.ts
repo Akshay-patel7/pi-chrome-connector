@@ -14,9 +14,10 @@ import { hasTarget, resolveTarget, type ResolvedTarget, type TargetSpec } from "
 
 const TARGET_PARAMS = {
 	ref: Type.Optional(Type.String({ description: "Snapshot ref, e.g. e12" })),
-	selector: Type.Optional(Type.String({ description: "CSS selector (use >> to pierce shadow roots)" })),
+	selector: Type.Optional(Type.String({ description: "CSS selector (>> pierces shadow roots)" })),
 	text: Type.Optional(Type.String({ description: "Visible text of the element" })),
-	frame: Type.Optional(Type.String({ description: "Iframe id, name or URL substring (for selector/text)" })),
+	frame: Type.Optional(Type.String({ description: "Iframe id, name or URL substring" })),
+	timeoutMs: Type.Optional(Type.Integer({ description: "Wait for the element, ms (default 5000; 0 = none)" })),
 };
 
 interface Point {
@@ -34,6 +35,8 @@ interface PointResult extends Point {
 
 const SETTLE_MS = 150;
 const NAVIGATION_WAIT_MS = 10_000;
+/** Actionability (visible, uncovered, enabled) is rechecked at least this long even with timeoutMs 0. */
+const MIN_ACTIONABILITY_MS = 600;
 
 export function registerInteractionTools(pi: ExtensionAPI, services: ToolServices): void {
 	const { connector } = services;
@@ -42,17 +45,17 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 		name: "chrome_click",
 		label: "Chrome click",
 		description:
-			"Click an element (by ref, selector, or visible text) or a viewport point (x, y) with a real mouse event. Scrolls the element into view, verifies nothing covers it (reports the covering element; force:true clicks anyway), waits for any navigation the click starts, and reports what changed (URL, new console errors, failed requests, dialogs). button: left|right|middle; clickCount 2 for double-click; modifiers like [\"Shift\"] or [\"Meta\"].",
+			"Click an element (ref, selector, or visible text) or a viewport point (x, y) with real mouse events. Waits up to timeoutMs for the element to appear and be uncovered, scrolls it into view, reports a covering element (force:true clicks through), waits for a navigation the click starts, and reports what changed. button left|right|middle; clickCount 2 = double-click; modifiers e.g. [\"Shift\"].",
 		promptSnippet: "Click an element in Chrome by ref, selector, text, or coordinates",
 		parameters: Type.Object({
 			...TARGET_PARAMS,
 			x: Type.Optional(Type.Number({ description: "Viewport x in CSS px (with y, instead of an element)" })),
 			y: Type.Optional(Type.Number()),
 			button: Type.Optional(StringEnum(["left", "right", "middle"] as const)),
-			clickCount: Type.Optional(Type.Integer({ description: "1 = click, 2 = double-click, 3 = triple-click" })),
+			clickCount: Type.Optional(Type.Integer({ description: "2 = double-click" })),
 			modifiers: Type.Optional(Type.Array(StringEnum(["Alt", "Control", "Meta", "Shift"] as const))),
-			force: Type.Optional(Type.Boolean({ description: "Click even if another element covers the target" })),
-			focus: Type.Optional(Type.Boolean({ description: "Override focus mode for this call" })),
+			force: Type.Optional(Type.Boolean({ description: "Click through a covering element" })),
+			focus: Type.Optional(Type.Boolean({ description: "Override focus mode" })),
 		}),
 		async execute(params, run) {
 			const session = await connector.currentSession({ focus: params.focus, signal: run.signal });
@@ -62,7 +65,7 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 			const clickCount = clampInt(params.clickCount, 1, 1, 3);
 			let where: string;
 			if (hasTarget(params)) {
-				const target = await resolveTarget(session, params);
+				const target = await resolveTarget(session, params, { timeoutMs: params.timeoutMs });
 				try {
 					const point = await pointFor(session, target, { force: params.force });
 					await mouseClick(session, point, { button, clickCount, modifiers, sessionId: target.sessionId });
@@ -92,7 +95,7 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 			const mark = markState(session);
 			let where: string;
 			if (hasTarget(params)) {
-				const target = await resolveTarget(session, params);
+				const target = await resolveTarget(session, params, { timeoutMs: params.timeoutMs });
 				try {
 					const point = await pointFor(session, target, { force: true });
 					await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y }, { sessionId: target.sessionId });
@@ -115,14 +118,14 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 		name: "chrome_fill",
 		label: "Chrome fill",
 		description:
-			"Set the value of a form control the way a user would: focuses it, replaces existing content, and inserts the text with trusted input events (works with React/Vue/Angular). Handles inputs, textareas, contenteditable editors, checkboxes/radios (value \"true\"/\"false\"/\"toggle\"), selects (option value or label), and date/time/color/range inputs (native format, e.g. 2026-09-20). For passwords or other credentials pass secret: NAME instead of value; the value comes from the connector's secrets config or environment and never appears in this conversation. pressEnter submits afterwards.",
+			"Set a form control's value like a user: focus, select all, insert text with trusted input events (works with React/Vue/Angular). Handles inputs, textareas, contenteditable, checkboxes/radios (value \"true\"/\"false\"/\"toggle\"), selects (option value or label), and date/time/color/range inputs (native format, e.g. 2026-09-20). Pass secret: NAME instead of value for credentials; the value never enters the conversation. pressEnter submits afterwards.",
 		promptSnippet: "Fill a form field in Chrome (use secret: NAME for credentials)",
 		promptGuidelines: ["Use chrome_fill with secret: NAME for passwords and API keys; never ask the user to paste credentials into the chat when a secret name exists (chrome_status lists them)."],
 		parameters: Type.Object({
 			...TARGET_PARAMS,
-			value: Type.Optional(Type.String({ description: "Text or value to set (empty string clears)" })),
-			secret: Type.Optional(Type.String({ description: "Name of a configured secret to use as the value" })),
-			pressEnter: Type.Optional(Type.Boolean({ description: "Press Enter after filling" })),
+			value: Type.Optional(Type.String({ description: "Value to set (empty string clears)" })),
+			secret: Type.Optional(Type.String({ description: "Configured secret to use as the value" })),
+			pressEnter: Type.Optional(Type.Boolean({ description: "Press Enter afterwards" })),
 			focus: Type.Optional(Type.Boolean()),
 		}),
 		async execute(params, run) {
@@ -132,7 +135,7 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 			const shown = params.secret !== undefined ? `[secret ${params.secret}]` : JSON.stringify(value.length > 60 ? `${value.slice(0, 59)}…` : value);
 			const session = await connector.currentSession({ focus: params.focus, signal: run.signal });
 			const mark = markState(session);
-			const target = await resolveTarget(session, params);
+			const target = await resolveTarget(session, params, { timeoutMs: params.timeoutMs });
 			let outcome: string;
 			try {
 				outcome = await fillTarget(session, target, value);
@@ -149,14 +152,14 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 		name: "chrome_type",
 		label: "Chrome type",
 		description:
-			"Type text key by key into the focused element (or into ref/selector/text first), sending real keydown/keypress/keyup events with optional delayMs between keys. Use this for autocomplete/typeahead inputs and editors that react to each keystroke; use chrome_fill to set a value in one go. \\n presses Enter. secret: NAME types a configured secret without exposing it.",
+			"Type text key by key (real keydown/keypress/keyup) into the focused element, or into ref/selector first. For typeahead inputs and editors that react per keystroke; use chrome_fill to set a value in one go. \\n presses Enter; delayMs spaces the keys; secret: NAME types a configured secret without exposing it.",
 		promptSnippet: "Type text key-by-key in Chrome (for typeahead/autocomplete fields)",
 		parameters: Type.Object({
 			...TARGET_PARAMS,
 			text: Type.Optional(Type.String({ description: "Text to type (\\n = Enter)" })),
-			secret: Type.Optional(Type.String({ description: "Name of a configured secret to type" })),
-			delayMs: Type.Optional(Type.Integer({ description: "Delay between keys (default 0)" })),
-			clear: Type.Optional(Type.Boolean({ description: "Select-all + delete before typing" })),
+			secret: Type.Optional(Type.String({ description: "Configured secret to type" })),
+			delayMs: Type.Optional(Type.Integer({ description: "Delay between keys" })),
+			clear: Type.Optional(Type.Boolean({ description: "Select all and delete first" })),
 			focus: Type.Optional(Type.Boolean()),
 		}),
 		async execute(params, run) {
@@ -171,7 +174,7 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 			let where = "the focused element";
 			const locator: TargetSpec = { ref: rest.ref, selector: rest.selector, frame: rest.frame };
 			if (hasTarget(locator)) {
-				const target = await resolveTarget(session, locator);
+				const target = await resolveTarget(session, locator, { timeoutMs: params.timeoutMs });
 				try {
 					await focusTarget(session, target);
 					sessionId = target.sessionId;
@@ -194,15 +197,16 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 		name: "chrome_press",
 		label: "Chrome press",
 		description:
-			"Press keys or shortcuts: \"Enter\", \"Tab\", \"Escape\", \"ArrowDown\", \"Control+a\", \"Meta+Shift+p\", \"F5\". Separate several chords with spaces (\"Control+a Backspace\"); repeat presses the sequence N times. Goes to the focused element (or focuses ref/selector first). macOS editing shortcuts (Cmd+A/C/V/X/Z) are honored.",
+			"Press keys or shortcuts: \"Enter\", \"Tab\", \"Escape\", \"ArrowDown\", \"Control+a\", \"Meta+Shift+p\". Several chords separated by spaces (\"Control+a Backspace\"); repeat presses the sequence N times. Goes to the focused element, or focuses ref/selector first. macOS editing shortcuts (Cmd+A/C/V/X/Z) work.",
 		promptSnippet: "Press a key or keyboard shortcut in Chrome",
 		parameters: Type.Object({
-			keys: Type.String({ description: "Key or chord(s), e.g. \"Enter\" or \"Control+Shift+p\" or \"ArrowDown ArrowDown Enter\"" }),
-			repeat: Type.Optional(Type.Integer({ description: "Times to press the sequence (default 1)" })),
+			keys: Type.String({ description: "Key or chords, e.g. \"Enter\", \"Control+Shift+p\", \"ArrowDown ArrowDown Enter\"" }),
+			repeat: Type.Optional(Type.Integer({ description: "Times to press the sequence" })),
 			delayMs: Type.Optional(Type.Integer({ description: "Delay between presses" })),
 			ref: TARGET_PARAMS.ref,
 			selector: TARGET_PARAMS.selector,
 			frame: TARGET_PARAMS.frame,
+			timeoutMs: TARGET_PARAMS.timeoutMs,
 			focus: Type.Optional(Type.Boolean()),
 		}),
 		async execute(params, run) {
@@ -211,7 +215,7 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 			const chords = params.keys.trim().split(/\s+/).map(parseChord);
 			let sessionId: string | undefined;
 			if (params.ref || params.selector) {
-				const target = await resolveTarget(session, { ref: params.ref, selector: params.selector, frame: params.frame });
+				const target = await resolveTarget(session, { ref: params.ref, selector: params.selector, frame: params.frame }, { timeoutMs: params.timeoutMs });
 				try {
 					await focusTarget(session, target);
 					sessionId = target.sessionId;
@@ -236,7 +240,7 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 		name: "chrome_scroll",
 		label: "Chrome scroll",
 		description:
-			"Scroll the page or a scrollable container with real wheel events. deltaY > 0 scrolls down (default 600 px), deltaX for horizontal. Give ref/selector/text to scroll inside that container, or to: \"top\" | \"bottom\" | \"element\" (scroll the target into view). Reports the resulting scroll position.",
+			"Scroll the page or a container with real wheel events: deltaY > 0 scrolls down (default 600), deltaX sideways. Give ref/selector/text to scroll inside that element, or to: top | bottom | element (scroll the target into view). Reports the resulting scroll position.",
 		promptSnippet: "Scroll the Chrome page or a container",
 		parameters: Type.Object({
 			...TARGET_PARAMS,
@@ -250,7 +254,7 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 			const mark = markState(session);
 			let report: string;
 			if (hasTarget(params)) {
-				const target = await resolveTarget(session, params);
+				const target = await resolveTarget(session, params, { timeoutMs: params.timeoutMs });
 				try {
 					if (params.to === "element") {
 						await session.callFunctionOn(target.objectId, "function () { this.scrollIntoView({ block: 'center', inline: 'nearest' }); }", [], { sessionId: target.sessionId });
@@ -282,13 +286,13 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 	registerChromeTool(pi, services, {
 		name: "chrome_select",
 		label: "Chrome select",
-		description: "Choose option(s) in a <select> by option value or label (case-insensitive). Fires input and change events. For custom dropdowns (divs), use chrome_click on the trigger and then on the option.",
+		description: "Choose option(s) in a <select> by value or label (case-insensitive); fires input and change. For custom dropdowns, chrome_click the trigger and then the option.",
 		parameters: Type.Object({ ...TARGET_PARAMS, values: Type.Array(Type.String(), { description: "Option values or labels; several only for multi-selects" }), focus: Type.Optional(Type.Boolean()) }),
 		async execute(params, run) {
 			if (!hasTarget(params)) throw new Error("Give the select as ref, selector, or text.");
 			const session = await connector.currentSession({ focus: params.focus, signal: run.signal });
 			const mark = markState(session);
-			const target = await resolveTarget(session, params);
+			const target = await resolveTarget(session, params, { timeoutMs: params.timeoutMs });
 			try {
 				const result = await selectOptions(session, target, params.values);
 				await settle(session, mark);
@@ -302,7 +306,7 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 	registerChromeTool(pi, services, {
 		name: "chrome_upload",
 		label: "Chrome upload",
-		description: "Attach local files to an <input type=file> (ref, selector, or text of its label) without opening the OS file picker. Paths are resolved against the working directory. Fires the input's change event.",
+		description: "Attach local files to an <input type=file> (ref, selector, or its label text) without the OS file picker. Relative paths resolve against the working directory. Fires change.",
 		parameters: Type.Object({ ...TARGET_PARAMS, files: Type.Array(Type.String(), { description: "Local file paths" }) }),
 		async execute(params, run) {
 			if (!hasTarget(params)) throw new Error("Give the file input as ref, selector, or text.");
@@ -316,7 +320,7 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 			}
 			const session = await connector.currentSession({ focus: false, signal: run.signal });
 			const mark = markState(session);
-			const target = await resolveTarget(session, params);
+			const target = await resolveTarget(session, params, { timeoutMs: params.timeoutMs });
 			try {
 				const { value: inputObject } = await session.callFunctionOn<string>(target.objectId, FIND_FILE_INPUT, [], { sessionId: target.sessionId });
 				if (inputObject !== "ok") throw new Error(`${target.description} is not a file input and contains none.`);
@@ -335,8 +339,7 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 	registerChromeTool(pi, services, {
 		name: "chrome_mouse",
 		label: "Chrome mouse",
-		description:
-			"Low-level mouse control in viewport CSS pixels for gestures the other tools don't cover: move, down, up, wheel, and drag (from x,y to toX,toY in steps, with the button held). Use chrome_click for ordinary clicks.",
+		description: "Low-level mouse in viewport CSS px: move, down, up, wheel, drag (x,y to toX,toY in steps with the button held). Use chrome_click for ordinary clicks.",
 		parameters: Type.Object({
 			action: StringEnum(["move", "down", "up", "wheel", "drag"] as const),
 			x: Type.Number(),
@@ -392,19 +395,22 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 
 // --- element geometry -------------------------------------------------------------------------
 
+/**
+ * Where to click: the element's visible center, once it is actionable. Rechecks until the target's
+ * deadline (at least MIN_ACTIONABILITY_MS): a dialog still animating open, a button covered by a
+ * closing overlay, or an element inserted hidden and shown a moment later all pass on a later poll.
+ */
 export async function pointFor(session: TabSession, target: ResolvedTarget, options: { force?: boolean }): Promise<Point> {
 	await session.send("DOM.scrollIntoViewIfNeeded", { objectId: target.objectId }, { sessionId: target.sessionId }).catch(() => {});
+	const deadline = Math.max(target.deadline, Date.now() + MIN_ACTIONABILITY_MS);
 	let last: PointResult | undefined;
-	for (let attempt = 0; attempt < 4; attempt++) {
+	for (let attempt = 0; ; attempt++) {
 		const { value } = await session.callFunctionOn<PointResult>(target.objectId, CLICK_POINT, [], { sessionId: target.sessionId });
 		last = value;
-		if (value.error) {
-			if (attempt === 0) await session.callFunctionOn(target.objectId, "function () { this.scrollIntoView({ block: 'center', inline: 'center' }); }", [], { sessionId: target.sessionId }).catch(() => {});
-			await sleep(100);
-			continue;
-		}
-		if (!value.occluded || options.force) return { x: value.x, y: value.y };
-		await sleep(150);
+		if (!value.error && (!value.occluded || options.force)) return { x: value.x, y: value.y };
+		if (Date.now() >= deadline) break;
+		if (value.error && attempt === 0) await session.callFunctionOn(target.objectId, "function () { this.scrollIntoView({ block: 'center', inline: 'center' }); }", [], { sessionId: target.sessionId }).catch(() => {});
+		await sleep(value.error ? 100 : 150);
 	}
 	if (last?.error) throw new Error(`${target.description} (${target.label}) cannot be clicked: ${last.error}.`);
 	throw new Error(`${target.description} (${target.label}) is covered by ${last?.blocker ?? "another element"}. Close or dismiss it first, scroll, or pass force:true to click through.`);
@@ -503,8 +509,13 @@ export async function typeText(session: TabSession, text: string, delayMs: numbe
 // --- fill -----------------------------------------------------------------------------------
 
 async function focusTarget(session: TabSession, target: ResolvedTarget): Promise<void> {
-	const { value: blocker } = await session.callFunctionOn<string | null>(target.objectId, NOT_INTERACTABLE_REASON, [], { sessionId: target.sessionId });
-	if (blocker) throw new Error(`${target.description} (${target.label}) cannot take input: ${blocker}.`);
+	const deadline = Math.max(target.deadline, Date.now() + MIN_ACTIONABILITY_MS);
+	for (;;) {
+		const { value: blocker } = await session.callFunctionOn<string | null>(target.objectId, NOT_INTERACTABLE_REASON, [], { sessionId: target.sessionId });
+		if (!blocker) break;
+		if (Date.now() >= deadline) throw new Error(`${target.description} (${target.label}) cannot take input: ${blocker}.`);
+		await sleep(100);
+	}
 	await session.send("DOM.scrollIntoViewIfNeeded", { objectId: target.objectId }, { sessionId: target.sessionId }).catch(() => {});
 	try {
 		await session.send("DOM.focus", { objectId: target.objectId }, { sessionId: target.sessionId });

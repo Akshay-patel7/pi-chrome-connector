@@ -33,7 +33,7 @@ export function registerEmulateTool(pi: ExtensionAPI, services: ToolServices): v
 		name: "chrome_emulate",
 		label: "Chrome emulate",
 		description:
-			`Emulate conditions in the current tab (like DevTools device toolbar / rendering / network panels). Any combination of: device preset (${Object.keys(DEVICES).join(", ")}) or explicit viewport width/height (+ deviceScaleFactor, mobile touch); userAgent; colorScheme dark|light; reducedMotion; locale (e.g. de-DE) and timezone (e.g. Europe/Berlin); geolocation latitude/longitude (the site must already have location permission; it cannot be granted from here); offline; network throttling profile (${Object.keys(NETWORK_PROFILES).join(", ")}); cpuSlowdown factor (e.g. 4); mediaType print|screen. reset: true clears all emulation. Settings persist for the tab until reset. Pages without a viewport meta tag lay out at 980px in mobile mode, like on a real phone.`,
+			`Emulate conditions in the current tab, like the DevTools device, rendering and network panels: device preset (${Object.keys(DEVICES).join(", ")}) or viewport width/height (+ deviceScaleFactor, mobile touch); userAgent; colorScheme dark|light; reducedMotion; locale and timezone; geolocation latitude/longitude (the site must already have permission); offline; network profile (${Object.keys(NETWORK_PROFILES).join(", ")}); cpuSlowdown factor; mediaType print|screen. reset: true clears everything. Settings persist for the tab until reset.`,
 		promptSnippet: "Emulate device/viewport, dark mode, locale, geolocation, offline or slow network in the current Chrome tab",
 		parameters: Type.Object({
 			device: Type.Optional(StringEnum(Object.keys(DEVICES) as [string, ...string[]])),

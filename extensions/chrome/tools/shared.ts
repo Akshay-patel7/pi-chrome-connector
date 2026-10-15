@@ -1,7 +1,7 @@
 // Shared plumbing for chrome_* tools: registration wrapper, error translation, output helpers,
 // and the "what changed" summary appended after actions.
 
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolDefinition, ToolExposure } from "@earendil-works/pi-coding-agent";
 import type { Static, TObject } from "typebox";
 import { BridgeError } from "../bridge/server.ts";
 import type { Connector } from "../connector.ts";
@@ -32,14 +32,21 @@ export interface ChromeToolSpec<T extends TObject> {
 	promptSnippet?: string;
 	promptGuidelines?: string[];
 	parameters: T;
+	/** Overrides the exposure shared by the chrome_* tools (the `chrome` tool is always declared). */
+	exposure?: ToolExposure;
 	execute: (params: Static<T>, run: RunContext) => Promise<ToolOutput>;
 }
 
 export interface ToolServices {
 	connector: Connector;
+	/** How the chrome_* tools reach the model: "direct" declares all of them; "deferred" waits for the `chrome` tool. */
+	exposure: ToolExposure;
+	/** Every tool registered through registerChromeTool, in order; the `chrome` tool activates these. */
+	toolNames: string[];
 }
 
 export function registerChromeTool<T extends TObject>(pi: ExtensionAPI, services: ToolServices, spec: ChromeToolSpec<T>): void {
+	services.toolNames.push(spec.name);
 	const definition: ToolDefinition<T, Record<string, unknown> | undefined> = {
 		name: spec.name,
 		label: spec.label,
@@ -47,6 +54,7 @@ export function registerChromeTool<T extends TObject>(pi: ExtensionAPI, services
 		promptSnippet: spec.promptSnippet,
 		promptGuidelines: spec.promptGuidelines,
 		parameters: spec.parameters,
+		exposure: spec.exposure ?? services.exposure,
 		executionMode: "sequential",
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const progress = (message: string) => onUpdate?.({ content: [{ type: "text", text: message }], details: undefined });
@@ -103,27 +111,47 @@ export function markState(session: TabSession): StateMark {
 	};
 }
 
-/** One line describing side effects since the mark, or an empty string when nothing notable happened. */
+/**
+ * One line describing side effects since the mark, or an empty string when nothing notable happened.
+ * Only things the model may need to act on: a navigation, console errors, failed or blocked requests,
+ * an open dialog. Plain request counts and warnings are left out; chrome_network and chrome_console
+ * have them when they matter.
+ */
 export function describeDelta(session: TabSession, mark: StateMark): string {
 	const notes: string[] = [];
-	if (session.navigationCount !== mark.navigationCount || session.url !== mark.url) notes.push(`navigated to ${session.url}`);
+	if (session.navigationCount !== mark.navigationCount || session.url !== mark.url) notes.push(`navigated to ${shortUrl(session.url)}`);
 	const errors = session.console.countSince(mark.consoleSeq, "error");
-	const warnings = session.console.countSince(mark.consoleSeq, "warning") - errors;
-	if (errors > 0) notes.push(`${errors} new console error${errors === 1 ? "" : "s"} (chrome_console level=error)`);
-	if (warnings > 0) notes.push(`${warnings} new console warning${warnings === 1 ? "" : "s"}`);
+	if (errors > 0) notes.push(`${errors} console error${errors === 1 ? "" : "s"} (chrome_console level=error)`);
 	const { failed, blocked, aborted, canceled } = session.network.countFailedSince(mark.networkSeq);
 	if (failed > 0) notes.push(`${failed} failed request${failed === 1 ? "" : "s"} (chrome_network failedOnly=true)`);
-	if (blocked > 0) notes.push(`${blocked} request${blocked === 1 ? "" : "s"} blocked by a browser extension (ad blocker; usually telemetry)`);
-	if (aborted > 0) notes.push(`${aborted} request${aborted === 1 ? "" : "s"} aborted by chrome_route`);
-	if (canceled > 0) notes.push(`${canceled} request${canceled === 1 ? "" : "s"} canceled by the page (navigation or abort; usually harmless)`);
-	const requests = session.network.lastSeq - mark.networkSeq;
-	if (requests > 0 && failed === 0) notes.push(`${requests} request${requests === 1 ? "" : "s"}`);
+	if (blocked > 0) notes.push(`${blocked} blocked by an ad blocker`);
+	if (aborted > 0) notes.push(`${aborted} aborted by chrome_route`);
+	if (canceled > 0) notes.push(`${canceled} canceled by the page`);
 	if (session.dialog) notes.push(`dialog open: ${session.dialog.type} "${session.dialog.message.slice(0, 80)}"`);
 	return notes.length > 0 ? `Since: ${notes.join("; ")}.` : "";
 }
 
 export function pageLine(session: TabSession): string {
-	return `${session.title ? `"${session.title}" ` : ""}${session.url}`;
+	return `${session.title ? `"${session.title}" ` : ""}${shortUrl(session.url)}`;
+}
+
+/**
+ * A URL short enough for a report line: the origin and path stay, a long query string (OAuth state,
+ * tokens) is cut. chrome_evaluate location.href and chrome_network have the full value.
+ */
+export function shortUrl(url: string, max = 120): string {
+	if (url.length <= max) return url;
+	try {
+		const parsed = new URL(url);
+		const base = `${parsed.origin}${parsed.pathname}`;
+		if (base.length + 2 <= max) {
+			const rest = url.slice(base.length);
+			return `${base}${rest.slice(0, max - base.length - 1)}…`;
+		}
+	} catch {
+		// Not an absolute URL; fall through to a plain cut.
+	}
+	return `${url.slice(0, max - 1)}…`;
 }
 
 export function joinLines(...parts: Array<string | undefined | false>): string {

@@ -6,27 +6,40 @@ description: "Drive the user's real Chrome with the chrome_* tools (pi-chrome-co
 # Chrome connector
 
 You control the user's real Chrome profile (signed-in sessions, cookies, extensions) through a
-companion extension. There is no authorization step: if the tools are registered, use them.
-If Chrome is not running, the first call launches it. All tools act on the **current tab**, which
-lives in a dedicated agent window opened on first use; the user's own tabs are untouched unless
-you `chrome_tabs use` one of them.
+companion extension. There is no authorization step. If Chrome is not running, the first call
+launches it. All tools act on the **current tab**, which lives in a dedicated agent window opened
+on first use; the user's own tabs are untouched unless you `chrome_tabs use` one of them.
+
+Usually only the `chrome` tool is declared at first. Call it once: it connects, reports the
+current tab, and declares the other chrome_* tools for the rest of the session. If a chrome_*
+tool comes back "not found", that is why.
 
 ## The loop
 
 ```
+chrome                         ->  once per session: connect and declare the chrome_* tools
 chrome_navigate url            ->  loaded? HTTP status? console errors during load?
 chrome_snapshot                ->  refs (e12) for everything interactive
 chrome_click / chrome_fill /
 chrome_type / chrome_press     ->  each reports "Since: navigated to…; N console errors; M failed requests"
-chrome_wait                    ->  selector / text / function / url / networkidle (never sleep-and-hope)
+chrome_wait                    ->  url / text / function / networkidle, for things other than an element appearing
 chrome_evaluate                ->  assert exact state: text, counts, URL, app store
 chrome_console level=error     ->  clean console is part of "verified"
 chrome_network failedOnly=true ->  no failed API calls
 chrome_screenshot              ->  visual confirmation you can see, saved to disk for the user
 ```
 
+Finds and actions wait for their element. `chrome_find`, `chrome_click`, `chrome_fill`,
+`chrome_type`, `chrome_press`, `chrome_select`, `chrome_upload`, `chrome_hover`, `chrome_scroll`,
+`chrome_dom` and a scoped `chrome_snapshot` keep looking for up to 5 s (`timeoutMs`), and clicks
+also wait for the element to be visible and uncovered. So `chrome_navigate` followed directly by
+`chrome_click text="Save"` works even though the app renders after `load`, and a dialog that
+animates open can be clicked into right away. Pass `timeoutMs: 0` when you only want to know
+whether something is there now. A miss says what it waited and which page it looked at: if that
+page is a sign-in screen, the app redirected you.
+
 Reading the "Since:" line and network output: "failed requests" are real (network errors, HTTP
-4xx/5xx). "blocked by a browser extension" is the user's ad blocker eating telemetry (Sentry,
+4xx/5xx). "blocked by an ad blocker" is the user's ad blocker eating telemetry (Sentry,
 Datadog, LaunchDarkly events); "canceled by the page" is the app closing its own streams or
 navigating away; "aborted by chrome_route" is your own rule. Only the first kind is evidence of
 an app problem. Console lines tagged `[error/network]` are the same events with their URL.
@@ -71,9 +84,13 @@ snapshot, it does not mean the element is gone.
 ## SPA navigation and timing
 
 - After a click that routes client-side, the `Since:` line shows the new URL. Confirm with
-  `chrome_evaluate location.pathname` and a `chrome_wait` on something the new view renders.
-- `chrome_wait load=networkidle` after data-heavy actions; `chrome_wait selector=".toast"
-  state=visible` for feedback; `state=hidden` for spinners to disappear.
+  `chrome_evaluate location.pathname` and act on the new view; the next find or action waits for
+  it to render.
+- `chrome_wait` is for conditions that are not "an element appeared": `url="/dashboard"`,
+  `load=networkidle` after data-heavy actions, `selector=".spinner" state=hidden`, `text="Saved"`,
+  or a `function` watching a background job. Run a long wait on its own turn: tool calls in one
+  message run in order, so a 2-minute wait that never comes true also stalls every call queued
+  after it.
 - Never poll with repeated snapshots or `timeMs` waits when a condition can be expressed.
 
 ## When something blocks
@@ -94,6 +111,10 @@ snapshot, it does not mean the element is gone.
   `new`.
 - Chrome disconnected: retry once; the connector reconnects and relaunches Chrome if needed. If
   it keeps failing, tell the user to run `/chrome doctor`.
+- "extension did not connect to the bridge within 60 s": the connector already opened a Chrome
+  window and waited a full minute. One retry can still work (an idle worker wakes about every
+  30 s). If it fails again, the extension is probably installed in a different profile than the
+  window that opened, or needs a reload at chrome://extensions; say that and stop.
 
 ## DevTools questions
 
@@ -127,5 +148,9 @@ fill, evaluate and wait. Cross-origin iframes work (they run out-of-process; the
   session.
 - Do not close the user's tabs. `chrome_tabs close` without an id closes the current agent tab
   only. `/chrome cleanup` (user command) closes everything the session opened.
+- Context is finite. Scope snapshots (`selector`, `ref`, `maxChars`), prefer `chrome_find` to a
+  full snapshot, read one network entry with `get` instead of listing fifty, and take
+  screenshots when you need to see something, not after every step (each costs about as much
+  context as 800 words).
 - Report what you verified and how (which assertion, which screenshot path), and what you could
   not verify.

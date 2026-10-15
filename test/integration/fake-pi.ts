@@ -1,6 +1,6 @@
 // Just enough of pi's ExtensionAPI to load the extension and invoke tools and commands directly.
 
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 
 type AnyTool = ToolDefinition<any, any, any>;
@@ -18,6 +18,8 @@ export class FakePi {
 	readonly handlers = new Map<string, Handler[]>();
 	readonly entries: Array<{ customType: string; data: unknown }> = [];
 	readonly notifications: string[] = [];
+	/** Tools declared to the model: direct/model-only ones on registration, others via setActiveTools. */
+	readonly activeTools = new Set<string>();
 	confirmAnswer = false;
 
 	get api(): ExtensionAPI {
@@ -25,6 +27,15 @@ export class FakePi {
 		const api: Partial<ExtensionAPI> = {
 			registerTool(definition) {
 				self.tools.set(definition.name, definition as AnyTool);
+				const exposure = (definition as AnyTool).exposure ?? "direct";
+				if (exposure === "direct" || exposure === "model-only") self.activeTools.add(definition.name);
+			},
+			getActiveTools() {
+				return [...self.activeTools];
+			},
+			setActiveTools(toolNames: string[]) {
+				self.activeTools.clear();
+				for (const name of toolNames) if (self.tools.has(name) && (self.tools.get(name) as AnyTool).exposure !== "hidden") self.activeTools.add(name);
 			},
 			registerCommand(name, options) {
 				self.commands.set(name, options as { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> | void });
@@ -82,7 +93,14 @@ export class FakePi {
 			const first = [...Value.Errors(tool.parameters, params)][0];
 			throw new Error(`${name}: parameters do not match the schema: ${first?.message ?? "unknown error"} (got ${JSON.stringify(params)})`);
 		}
-		const result = await tool.execute(`call-${Date.now()}`, params, undefined, undefined, this.context);
+		const toolContext: ExtensionToolContext = {
+			...this.context,
+			tools: [],
+			executeTool: async () => {
+				throw new Error("nested tool calls are not supported by FakePi");
+			},
+		};
+		const result = await tool.execute(`call-${Date.now()}`, params, undefined, undefined, toolContext);
 		const text = result.content
 			.filter((part): part is { type: "text"; text: string } => part.type === "text")
 			.map((part) => part.text)

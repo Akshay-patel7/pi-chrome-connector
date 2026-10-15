@@ -21,6 +21,11 @@ export interface ConnectorConfig {
 	/** Reuse an existing window (the one containing the active tab) instead of opening a dedicated one. */
 	reuseWindow: boolean;
 	/**
+	 * Declare only the small `chrome` tool to the model and let it activate the chrome_* tools on first
+	 * use. Sessions that never touch the browser then carry one short declaration instead of 27.
+	 */
+	lazyTools: boolean;
+	/**
 	 * Named values chrome_fill / chrome_type can enter without the value passing through the model
 	 * (`secret: "APP_PASSWORD"`). Environment variables are consulted when a name is missing here.
 	 */
@@ -54,6 +59,7 @@ export function loadConfig(agentDir: string, env: NodeJS.ProcessEnv = process.en
 		window: { width: 1280, height: 900 },
 		artifactDir: join(agentDir, "chrome-connector"),
 		reuseWindow: false,
+		lazyTools: true,
 		secrets: {},
 	};
 	const path = env.PI_CHROME_CONNECTOR_CONFIG ?? join(agentDir, "chrome-connector.json");
@@ -79,6 +85,7 @@ export function loadConfig(agentDir: string, env: NodeJS.ProcessEnv = process.en
 	}
 	if (typeof user.artifactDir === "string" && user.artifactDir.trim()) config.artifactDir = expandHome(user.artifactDir.trim(), env);
 	if (typeof user.reuseWindow === "boolean") config.reuseWindow = user.reuseWindow;
+	if (typeof user.lazyTools === "boolean") config.lazyTools = user.lazyTools;
 	if (user.secrets && typeof user.secrets === "object") {
 		config.secrets = Object.fromEntries(Object.entries(user.secrets as Record<string, unknown>).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
 	}

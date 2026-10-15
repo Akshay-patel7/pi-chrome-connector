@@ -125,7 +125,7 @@ test("blocked telemetry and blob workers do not masquerade as failures or keep t
 	await pi.callTool("chrome_route", { action: "add", url: "*/telemetry/*", mode: "abort", errorReason: "BlockedByClient" });
 	const nav = await pi.callTool("chrome_navigate", { url: `${fixtures.url}/telemetry.html`, waitUntil: "networkidle" });
 	assert.match(nav.text, /^Loaded: "Telemetry fixture"/, "networkidle reached despite the blob: worker request");
-	assert.match(nav.text, /2 requests aborted by chrome_route/);
+	assert.match(nav.text, /2 aborted by chrome_route/);
 	assert.doesNotMatch(nav.text, /failed request/);
 	assert.doesNotMatch(nav.text, /console error/, "blocked-request console lines are not counted as console errors");
 

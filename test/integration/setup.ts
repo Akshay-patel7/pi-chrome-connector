@@ -29,6 +29,8 @@ export async function startToolTestEnv(name: string, overrides: Partial<Connecto
 		window: { width: 1100, height: 800 },
 		artifactDir: join(artifactsDir, name),
 		reuseWindow: false,
+		// Existing tool tests call chrome_* tools directly; the loader has its own test.
+		lazyTools: false,
 		secrets: {},
 		...overrides,
 	};

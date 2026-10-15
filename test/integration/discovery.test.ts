@@ -45,7 +45,7 @@ test("probing dead ports records no runtime errors and the live port reconnects 
 		const again = await bridge.waitForClient(15_000);
 		assert.ok(again, "extension reconnected after reload");
 		assert.notEqual(again.id, before.id);
-		// Give the dead-port probes (immediate, then 2 s backoff) time to run and miss at least twice.
+		// Give the dead-port probes (immediate, then 1 s and 2 s backoff) time to run and miss at least twice.
 		await new Promise((resolveSleep) => setTimeout(resolveSleep, 3_500));
 		assert.deepEqual(await page.errors(), [], "no runtime errors on chrome://extensions");
 		assert.equal(bridge.connectedClients.length, 1, "exactly one connection to the live port");

@@ -15,7 +15,7 @@ export function registerEvaluateTool(pi: ExtensionAPI, services: ToolServices): 
 		name: "chrome_evaluate",
 		label: "Chrome evaluate",
 		description:
-			"Run JavaScript in the current tab and return the JSON-serialized result (promises are awaited). Pass an expression (`document.title`) or a function (`() => [...document.querySelectorAll('a')].map(a => a.href)`). With ref (from chrome_snapshot / chrome_find) the element is available as `el` and a function receives it as its argument. With frame, runs inside that iframe (id, name, or URL substring from chrome_frames). Errors return the exception message and stack. Runs even on pages with a strict CSP.",
+			"Run JavaScript in the current tab and return the JSON result (promises awaited): an expression (`document.title`) or a function (`() => [...document.querySelectorAll('a')].map(a => a.href)`). With ref the element is `el` and the function's argument; with frame it runs inside that iframe. Exceptions return the message and stack. Works under a strict CSP.",
 		promptSnippet: "Run JavaScript in the page (optionally against a snapshot ref or inside an iframe) and get the result",
 		promptGuidelines: [
 			"Use chrome_evaluate to assert page state precisely (element text, counts, URL, app state) instead of inferring it from a snapshot after an action.",

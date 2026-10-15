@@ -13,6 +13,12 @@ export interface ChromeLauncher {
 	readonly name: string;
 	isRunning(): Promise<boolean>;
 	launch(): Promise<void>;
+	/**
+	 * Ask a running browser to show a window. On macOS Chrome keeps running after its last window
+	 * closes, and an extension only runs while its profile has a window: its service worker is gone
+	 * and the reconnect alarm never fires. Opening a window starts it again within a few seconds.
+	 */
+	activate(): Promise<void>;
 }
 
 export interface SystemLauncherOptions {
@@ -61,6 +67,20 @@ export function createSystemLauncher(options: SystemLauncherOptions): ChromeLaun
 			if (app.includes("/") && !existsSync(app)) throw new Error(`Chrome binary not found at ${app}`);
 			spawn(app, options.args, { detached: true, stdio: "ignore" }).unref();
 		},
+		async activate() {
+			// With Chrome already running, each of these hands off to the running instance, which opens a
+			// window in the last-used profile when it has none and otherwise just comes to the front.
+			if (platform === "darwin") {
+				await execFileAsync("open", ["-a", app]).catch(() => {});
+				return;
+			}
+			if (platform === "win32") {
+				spawn("cmd", ["/c", "start", "", app], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+				return;
+			}
+			if (app.includes("/") && !existsSync(app)) return;
+			spawn(app, [], { detached: true, stdio: "ignore" }).unref();
+		},
 	};
 }
 
@@ -69,11 +89,18 @@ export interface EnsureConnectedOptions {
 	launcher: ChromeLauncher;
 	/** How long to wait for the extension after we launched the browser ourselves. */
 	launchTimeoutMs?: number;
-	/** How long to wait for the extension when the browser is already running (covers the 30 s alarm wake-up). */
+	/**
+	 * How long to wait for the extension when the browser is already running. An awake worker probes
+	 * every 2 s; an idle one is revived by a 30 s alarm that Chrome may fire late, so this covers two
+	 * alarm periods.
+	 */
 	wakeTimeoutMs?: number;
 	signal?: AbortSignal;
 	onProgress?: (message: string) => void;
 }
+
+/** How long an already-running Chrome gets to connect on its own before a window is requested. */
+export const ACTIVATE_AFTER_MS = 3_000;
 
 /**
  * Return a connected companion client, launching Chrome if it is not running.
@@ -98,13 +125,21 @@ export async function ensureConnected(options: EnsureConnectedOptions): Promise<
 		);
 	}
 
-	onProgress?.(`${launcher.name} is running; waiting for the companion extension to connect (up to 35 s if its worker is asleep)`);
-	const client = await bridge.waitForClient(options.wakeTimeoutMs ?? 35_000, signal);
+	const wakeTimeoutMs = options.wakeTimeoutMs ?? 60_000;
+	onProgress?.(`${launcher.name} is running; waiting for the companion extension to connect`);
+	// An awake worker probes every 2 s. Silence past that usually means Chrome has no window for the
+	// extension's profile (the worker is not running at all), so ask for one and keep waiting.
+	const early = await bridge.waitForClient(Math.min(ACTIVATE_AFTER_MS, wakeTimeoutMs), signal);
+	if (early) return early;
+	onProgress?.(`${launcher.name} has not answered in ${ACTIVATE_AFTER_MS / 1000} s; opening a window so its extension runs (an idle worker can also take up to 30 s; giving up after ${Math.round(wakeTimeoutMs / 1000)} s)`);
+	await launcher.activate();
+	const client = await bridge.waitForClient(Math.max(0, wakeTimeoutMs - ACTIVATE_AFTER_MS), signal);
 	if (client) return client;
 	throw new Error(
-		`${launcher.name} is running but the pi-chrome-connector extension did not connect to the bridge on port ${bridge.port} within the wait window. ` +
+		`${launcher.name} is running but the pi-chrome-connector extension did not connect to the bridge on port ${bridge.port} within ${Math.round(wakeTimeoutMs / 1000)} s. ` +
 			(bridge.lastHandshakeError
 				? `It connected but the handshake failed: ${bridge.lastHandshakeError}`
-				: "Likely causes: the extension is not installed (run /chrome onboard), it is disabled, or it needs a reload at chrome://extensions. Run /chrome doctor for details."),
+				: "Likely causes: the extension is not installed (run /chrome onboard), it is disabled, it is installed in a profile other than the one whose window just opened, or it needs a reload at chrome://extensions (clicking its toolbar icon forces a reconnect). Run /chrome doctor for details."),
 	);
 }
+

@@ -90,7 +90,7 @@ async function statusLines(services: CommandServices): Promise<string[]> {
 		lines.push(`Extension: connected, v${client.info?.version} in ${chromeVersion(client.info?.userAgent)}${client.info?.version !== services.packageVersion ? ` (package is v${services.packageVersion}; reload the extension at chrome://extensions to update)` : ""}`);
 	} else {
 		const running = await connector.launcher.isRunning();
-		lines.push(running ? `Extension: not connected yet (${connector.launcher.name} is running; its worker wakes within ~30 s, or run /chrome doctor)` : `Extension: not connected (${connector.launcher.name} is not running; the first browser tool call launches it, or run /chrome launch)`);
+		lines.push(running ? `Extension: not connected yet (${connector.launcher.name} is running; the next browser call opens a window if it has none, and an idle worker wakes within ~30 s; or run /chrome doctor)` : `Extension: not connected (${connector.launcher.name} is not running; the first browser tool call launches it, or run /chrome launch)`);
 	}
 	lines.push(`Current tab: ${connector.currentTab === undefined ? "none yet" : `[${connector.currentTab}]`}; focus mode ${connector.focus ? "on" : "off"}; owned tabs: ${connector.state.ownedTabIds.length}`);
 	return lines;
@@ -120,6 +120,7 @@ async function doctorLines(services: CommandServices): Promise<string[]> {
 		if (handshake) lines.push(`  - it connected but the handshake failed: ${handshake}`);
 		lines.push("  - not installed? run /chrome onboard");
 		lines.push("  - installed but asleep? it reconnects within ~30 s of pi starting; click its toolbar icon to force a reconnect");
+		lines.push("  - no Chrome window open? the extension only runs while its profile has a window; the connector opens one, but only in the last-used profile");
 		lines.push("  - disabled or errored? check chrome://extensions and reload it");
 		return lines;
 	}

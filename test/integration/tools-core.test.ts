@@ -91,7 +91,7 @@ test("chrome_evaluate handles expressions, functions, promises, refs-less errors
 	assert.equal((await pi.callTool("chrome_evaluate", { expression: "location.hostname", frame: "localhost" })).text, "localhost");
 });
 
-test("chrome_screenshot returns an inline image at CSS-pixel scale and writes the file", async () => {
+test("chrome_screenshot returns an inline image capped at 1024px wide by default, 1:1 with scale 1, and writes the file", async () => {
 	await pi.callTool("chrome_navigate", { url: `${fixtures.url}/index.html` });
 	const result = await pi.callTool("chrome_screenshot", {});
 	assert.equal(result.images.length, 1);
@@ -100,9 +100,13 @@ test("chrome_screenshot returns an inline image at CSS-pixel scale and writes th
 	assert.ok(existsSync(details.path), `file written at ${details.path}`);
 	assert.ok(statSync(details.path).size > 1000);
 	const viewport = JSON.parse((await pi.callTool("chrome_evaluate", { expression: "({ w: innerWidth, h: innerHeight })" })).text) as { w: number; h: number };
-	assert.equal(details.width, viewport.w, "width equals CSS viewport width");
-	assert.equal(details.height, viewport.h, "height equals CSS viewport height");
-	assert.match(result.text, /^Screenshot \d+x\d+ png \(\d+KB\) saved to /);
+	assert.ok(viewport.w > 1024, `test window is wider than the cap (${viewport.w})`);
+	assert.equal(details.width, 1024, "default width is capped at 1024");
+	assert.ok(Math.abs(details.height - Math.round((viewport.h * 1024) / viewport.w)) <= 1, `height scaled with the width (${details.height} for viewport ${viewport.w}x${viewport.h})`);
+	assert.match(result.text, /^Screenshot 1024x\d+ png \(\d+KB\) saved to /);
+	const oneToOne = (await pi.callTool("chrome_screenshot", { scale: 1, returnImage: false })).details as { width: number; height: number };
+	assert.equal(oneToOne.width, viewport.w, "scale 1 is one output pixel per CSS pixel");
+	assert.equal(oneToOne.height, viewport.h);
 
 	const element = await pi.callTool("chrome_screenshot", { selector: "h1", padding: 4, format: "jpeg", returnImage: false });
 	assert.equal(element.images.length, 0);

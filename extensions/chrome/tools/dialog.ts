@@ -8,7 +8,7 @@ export function registerDialogTool(pi: ExtensionAPI, services: ToolServices): vo
 		name: "chrome_dialog",
 		label: "Chrome dialog",
 		description:
-			"Handle JavaScript dialogs (alert, confirm, prompt, beforeunload) in the current tab. While one is open, page tools fail fast and tell you. Actions: status; accept (optional promptText for prompt()); dismiss; policy accept|dismiss|manual to auto-handle future dialogs for this tab (manual is the default and reports them to you).",
+			"Handle JavaScript dialogs (alert, confirm, prompt, beforeunload); while one is open, page tools fail fast and say so. Actions: status; accept (promptText for prompt()); dismiss; policy accept|dismiss|manual to auto-handle future dialogs in this tab (manual, the default, reports them).",
 		promptSnippet: "Accept or dismiss a JavaScript dialog, or set an auto-handling policy",
 		parameters: Type.Object({
 			action: StringEnum(["status", "accept", "dismiss", "policy"] as const),

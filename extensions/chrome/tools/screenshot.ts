@@ -9,12 +9,17 @@ import { clampInt, joinLines, pageLine, registerChromeTool, type ToolServices } 
 import { hasTarget, resolveTarget, type TargetSpec } from "./targets.ts";
 
 const MAX_FULL_PAGE_HEIGHT = 8000;
+/**
+ * Default cap on output width. A 1280 px viewport at 1:1 costs the model about 1,300 image tokens;
+ * at 1024 wide about 850, and layout and most text stay readable. `scale` overrides it.
+ */
+const MAX_DEFAULT_WIDTH = 1024;
 
 export interface ScreenshotOptions extends TargetSpec {
 	fullPage?: boolean;
 	format?: "png" | "jpeg";
 	quality?: number;
-	/** Output pixels per CSS pixel. Default 1 (Retina displays are downscaled). */
+	/** Output pixels per CSS pixel. Default: 1, reduced so the image is at most MAX_DEFAULT_WIDTH wide. */
 	scale?: number;
 	/** Extra CSS pixels of context around an element capture. */
 	padding?: number;
@@ -37,8 +42,9 @@ export async function captureScreenshot(session: TabSession, options: Screenshot
 	// (a 1120 CSS px layout shown on a 393 px screen). Folding it in keeps one output pixel per
 	// device-independent pixel, so a phone screenshot is phone-sized instead of a 9x zoomed-out render.
 	const pageScale = metrics.cssVisualViewport.scale || 1;
-	const scale = ((options.scale ?? 1) * pageScale) / dpr;
 	const viewport = metrics.cssVisualViewport;
+	// Each clip starts at scale 1; the real scale is set below, once the clip width is known.
+	const scale = 1;
 	let clip: Protocol.Page.Viewport;
 	let captureBeyondViewport = false;
 	let note: string | undefined;
@@ -80,6 +86,8 @@ export async function captureScreenshot(session: TabSession, options: Screenshot
 	} else {
 		clip = { x: viewport.pageX, y: viewport.pageY, width: viewport.clientWidth, height: viewport.clientHeight, scale };
 	}
+	const perCssPixel = options.scale ?? Math.min(1, MAX_DEFAULT_WIDTH / Math.max(1, clip.width));
+	clip.scale = (perCssPixel * pageScale) / dpr;
 
 	const shot = await session.send(
 		"Page.captureScreenshot",
@@ -122,20 +130,20 @@ export function registerScreenshotTool(pi: ExtensionAPI, services: ToolServices,
 		name: "chrome_screenshot",
 		label: "Chrome screenshot",
 		description:
-			"Screenshot the current tab. Default: the visible viewport at 1 output pixel per device-independent pixel (Retina downscaled; under device emulation a zoomed-out page is captured at what the device actually shows). fullPage captures the whole document (capped at 8000px tall; the page is briefly re-laid out, which can fire resize events). ref / selector / text captures just that element (scrolled into view; padding adds context; no side effects). The image is returned to you inline and saved to disk (path reported; pass path to choose the file). Use it to verify visual state; use chrome_snapshot to read structure.",
+			"Screenshot the current tab: the viewport by default, fullPage for the whole document (capped at 8000px tall; briefly re-lays out the page), or one element via ref / selector / text (padding adds context). Output is at most 1024px wide unless scale is given (1 = one pixel per CSS px, 2 = Retina detail). Returned inline and saved to disk (path reported). Use it to verify visual state; use chrome_snapshot to read structure.",
 		promptSnippet: "Capture the current Chrome tab (viewport, full page, or one element) as an image you can see",
 		parameters: Type.Object({
 			fullPage: Type.Optional(Type.Boolean()),
-			ref: Type.Optional(Type.String({ description: "Snapshot ref of the element to capture" })),
-			selector: Type.Optional(Type.String({ description: "CSS selector of the element to capture" })),
-			text: Type.Optional(Type.String({ description: "Visible text of the element to capture" })),
-			padding: Type.Optional(Type.Integer({ description: "CSS px of context around an element capture" })),
+			ref: Type.Optional(Type.String({ description: "Element to capture: snapshot ref" })),
+			selector: Type.Optional(Type.String({ description: "Element to capture: CSS selector" })),
+			text: Type.Optional(Type.String({ description: "Element to capture: visible text" })),
+			padding: Type.Optional(Type.Integer({ description: "CSS px of context around the element" })),
 			format: Type.Optional(StringEnum(["png", "jpeg"] as const)),
 			quality: Type.Optional(Type.Integer({ description: "JPEG quality 1-100 (default 80)" })),
-			scale: Type.Optional(Type.Number({ description: "Output pixels per CSS pixel (default 1; 2 for full Retina detail)" })),
-			path: Type.Optional(Type.String({ description: "Where to save the file (default: connector artifact dir)" })),
-			returnImage: Type.Optional(Type.Boolean({ description: "Include the image in the result (default true)" })),
-			focus: Type.Optional(Type.Boolean({ description: "Override focus mode for this call" })),
+			scale: Type.Optional(Type.Number({ description: "Output px per CSS px (default 1, capped to 1024 wide; 2 = Retina)" })),
+			path: Type.Optional(Type.String({ description: "File path (default: artifact dir)" })),
+			returnImage: Type.Optional(Type.Boolean({ description: "Return the image inline (default true)" })),
+			focus: Type.Optional(Type.Boolean({ description: "Override focus mode" })),
 		}),
 		async execute(params, run) {
 			const session = await services.connector.currentSession({ focus: params.focus, signal: run.signal });

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Late fixture</title>
+  <style>
+    #shown-later { visibility: hidden; }
+  </style>
+</head>
+<body>
+  <h1>Late fixture</h1>
+  <!-- Mimics a single-page app: the load event fires with an empty shell and content mounts later. -->
+  <div id="mount"></div>
+  <button id="shown-later">Shown later</button>
+  <button id="open-late-dialog">Open late dialog</button>
+  <div id="late-dialog" hidden>
+    <button id="late-ok">Late OK</button>
+  </div>
+  <p id="late-result"></p>
+  <script>
+    const result = document.getElementById("late-result");
+    setTimeout(() => {
+      const button = document.createElement("button");
+      button.id = "late-button";
+      button.textContent = "Late button";
+      button.onclick = () => { result.textContent = "late clicked"; };
+      document.getElementById("mount").appendChild(button);
+    }, 1200);
+    const shownLater = document.getElementById("shown-later");
+    shownLater.onclick = () => { result.textContent = "shown clicked"; };
+    setTimeout(() => { shownLater.style.visibility = "visible"; }, 900);
+    document.getElementById("open-late-dialog").onclick = () => {
+      setTimeout(() => { document.getElementById("late-dialog").hidden = false; }, 600);
+    };
+    document.getElementById("late-ok").onclick = () => { result.textContent = "late ok clicked"; };
+  </script>
+</body>
+</html>

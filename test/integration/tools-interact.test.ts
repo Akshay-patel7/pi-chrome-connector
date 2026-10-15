@@ -86,8 +86,8 @@ test("chrome_find by text, role and selector returns refs with context", async (
 	assert.match(byRole.text, /textbox "Name" \[e\d+\]    \(in heading "Form fixture"\)/);
 	const bySelector = await pi.callTool("chrome_find", { selector: "input[type=radio]" });
 	assert.match(bySelector.text, /2 matches:\n- input type=radio "free" \[e\d+\]\n- input type=radio "pro" \[e\d+\]/);
-	const none = await pi.callTool("chrome_find", { text: "does not exist anywhere" });
-	assert.match(none.text, /No elements match/);
+	const none = await pi.callTool("chrome_find", { text: "does not exist anywhere", timeoutMs: 0 });
+	assert.match(none.text, /^No elements match text "does not exist anywhere"\. Page: "Form fixture"/);
 });
 
 test("chrome_click by ref, text, selector; scrolls offscreen targets; reports occlusion", async () => {
@@ -101,14 +101,14 @@ test("chrome_click by ref, text, selector; scrolls offscreen targets; reports oc
 	assert.equal(await evaluate("document.getElementById('card-result').textContent"), "card clicked");
 
 	await pi.callTool("chrome_click", { selector: "#open-modal" });
-	await assert.rejects(pi.callTool("chrome_click", { selector: "#submit" }), /is covered by <div#overlay\.open> "Modal is open Close modal"\. Close or dismiss it first/);
+	await assert.rejects(pi.callTool("chrome_click", { selector: "#submit", timeoutMs: 300 }), /is covered by <div#overlay\.open> "Modal is open Close modal"\. Close or dismiss it first/);
 	await pi.callTool("chrome_click", { text: "Close modal" });
 	const submit = await pi.callTool("chrome_click", { selector: "#submit" });
 	assert.match(submit.text, /^Clicked <button id="submit"/);
 	assert.match(await evaluate("document.getElementById('submitted').textContent"), /^submitted:/);
 
 	await assert.rejects(pi.callTool("chrome_click", { ref: "e9999" }), /Unknown ref "e9999"/);
-	await assert.rejects(pi.callTool("chrome_click", { selector: "#nope" }), /No element matches selector "#nope"/);
+	await assert.rejects(pi.callTool("chrome_click", { selector: "#nope", timeoutMs: 0 }), /No element matches selector "#nope"\. Page: "Form fixture"/);
 });
 
 test("chrome_fill covers text, textarea, email, checkbox, radio, select, date, number, contenteditable and secrets", async () => {

@@ -63,12 +63,18 @@ Then:
 Everything should be a ✓. From now on, asking pi to "open localhost:3000 and check the
 dashboard" just works, including launching Chrome when it is closed.
 
-Requirements: Chrome 125+ (Chrome for Testing and Chromium work too), Node 24+, pi 0.86+.
+Requirements: Chrome 125+ (Chrome for Testing and Chromium work too), Node 24+, pi 0.99+.
 
 ## Tools
 
+By default only one small tool, `chrome`, is declared to the model: calling it connects to Chrome
+and declares the chrome_* tools for the rest of the session. The 27 declarations below cost about
+6k tokens per request, which sessions that never open a browser should not pay. Set
+`"lazyTools": false` to declare everything up front.
+
 | Tool | Purpose |
 | --- | --- |
+| `chrome` | Connect, report the current tab, declare the tools below (lazy mode only) |
 | `chrome_status` | Connection state; launches Chrome if needed; lists secret names |
 | `chrome_tabs` | list / new / use (by id, url, title) / close / focus |
 | `chrome_navigate` | goto / back / forward / reload with load, domcontentloaded or networkidle |
@@ -85,7 +91,7 @@ Requirements: Chrome 125+ (Chrome for Testing and Chromium work too), Node 24+, 
 | `chrome_mouse` | Raw move / down / up / wheel / drag |
 | `chrome_evaluate` | JavaScript with awaited promises, refs bound as `el`, iframe support, CSP-proof |
 | `chrome_wait` | selector state, text, function, URL, load state, networkidle, or plain time |
-| `chrome_screenshot` | Viewport / full page / element, returned inline and saved to disk |
+| `chrome_screenshot` | Viewport / full page / element, returned inline (at most 1024px wide unless `scale` is given) and saved to disk |
 | `chrome_console` | console.*, uncaught exceptions, browser log entries; level / since / includes filters |
 | `chrome_network` | Every request with headers, payloads, bodies, timing; filters; HAR export |
 | `chrome_route` | Mock, abort, delay or capture requests by URL glob |
@@ -96,6 +102,13 @@ Requirements: Chrome 125+ (Chrome for Testing and Chromium work too), Node 24+, 
 | `chrome_frames` | List iframes (same-process and out-of-process) |
 | `chrome_performance` | Navigation timing, Web Vitals, long tasks, resource summary, heap |
 | `chrome_pdf` | Print to PDF |
+
+Finds and actions wait for their element. `chrome_find`, `chrome_click`, `chrome_fill` and the
+other element tools keep looking for up to 5 s (`timeoutMs`; `0` looks once), and clicks also
+wait for the element to be visible and uncovered, the way Playwright locators do. A page that has
+fired `load` is usually still rendering, so without this the call after a navigation or a click
+ran against the app shell and missed. A miss reports how long it waited and which page it was
+looking at.
 
 Every action reports what changed since it started: navigation, new console errors, failed
 requests, open dialogs. Requests an ad blocker stopped, requests the page canceled itself, and
@@ -132,6 +145,7 @@ Optional `~/.pi/agent/chrome-connector.json` (or `$PI_CHROME_CONNECTOR_CONFIG`):
   "artifactDir": "~/.pi/agent/chrome-connector",
   "portRange": [17417, 17426],
   "reuseWindow": false,
+  "lazyTools": true,
   "secrets": {
     "APP_EMAIL": "you@example.com",
     "APP_PASSWORD": "..."
@@ -155,6 +169,16 @@ that bar; it is harmless, but its Cancel button detaches the agent from the tab 
 call reattaches). Quit Chrome and let the connector relaunch it if you want the bar gone.
 
 Change `portRange` only if you also edit `PORT_RANGE` in `chrome-extension/service_worker.js`.
+
+Connecting: each pi session runs its own bridge on the first free port of the range. The
+companion probes every port in the range every 2 s while its service worker is awake (any
+connected pi session keeps it awake); when no session is connected, Chrome stops the worker and
+an alarm wakes it about every 30 s. The extension only runs while its profile has a window: on
+macOS Chrome keeps running after its last window closes, and then nothing wakes the worker. So
+when a running Chrome stays silent for 3 s, the connector asks it to open a window (`open -a`,
+which uses the last-used profile) and keeps waiting, giving up after 60 s. The first browser
+call of a session therefore takes up to 2 s with another session open, about 3 to 5 s after all
+Chrome windows were closed, and up to about 30 s when a window is open but the worker is idle.
 
 ## Security
 
@@ -218,7 +242,7 @@ Two more things worth knowing:
 npm install
 npm run typecheck
 npm test                  # unit tests (WebSocket framing, keyboard layout)
-npm run test:integration  # launches Chrome for Testing with the extension; ~1 min
+npm run test:integration  # launches Chrome for Testing with the extension; ~2 min
 ```
 
 Integration tests need a Chrome for Testing or Chromium binary. They look in Playwright's cache

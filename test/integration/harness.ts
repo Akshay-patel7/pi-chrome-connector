@@ -149,7 +149,12 @@ export async function startFixtureServer(): Promise<FixtureServer> {
 		url: `http://127.0.0.1:${address.port}`,
 		port: address.port,
 		requests,
-		close: () => new Promise((resolveClose) => server.close(() => resolveClose())),
+		// server.close() alone waits for Chrome's idle keep-alive sockets, which it holds for about a minute.
+		close: () =>
+			new Promise((resolveClose) => {
+				server.close(() => resolveClose());
+				server.closeAllConnections();
+			}),
 	};
 }
 
@@ -201,6 +206,9 @@ export function createTestLauncher(options: TestLauncherOptions = {}): TestLaunc
 			args.push(...(options.extraArgs ?? []));
 			args.push("about:blank");
 			child = spawn(binary, args, { stdio: "ignore" });
+		},
+		async activate() {
+			// The test browser always has a window; there is nothing to reopen.
 		},
 	};
 

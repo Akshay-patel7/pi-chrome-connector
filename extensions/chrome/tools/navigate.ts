@@ -14,14 +14,14 @@ export function registerNavigateTool(pi: ExtensionAPI, services: ToolServices): 
 		name: "chrome_navigate",
 		label: "Chrome navigate",
 		description:
-			"Navigate the current tab: go to a URL, or back / forward / reload. Waits for the page to load (waitUntil: load by default; domcontentloaded, networkidle, or none) and reports the final URL, title, document status, load time, and any console errors or failed requests during the load. Opens the agent window on first use.",
+			"Navigate the current tab: goto a URL, or back / forward / reload. Waits for waitUntil (load by default; domcontentloaded, networkidle, none) and reports the final URL, title, HTTP status, load time, console errors and failed requests. Opens the agent window on first use. Pages often render after load: the next chrome_find or action waits for its element.",
 		promptSnippet: "Open a URL (or go back/forward/reload) in the current Chrome tab and wait for it to load",
 		parameters: Type.Object({
-			url: Type.Optional(Type.String({ description: "Absolute URL (http://, https://, file://, about:). Required for action goto." })),
+			url: Type.Optional(Type.String({ description: "Absolute URL (required for goto)" })),
 			action: Type.Optional(StringEnum(["goto", "back", "forward", "reload"] as const)),
 			waitUntil: Type.Optional(StringEnum(["load", "domcontentloaded", "networkidle", "none"] as const)),
-			timeoutMs: Type.Optional(Type.Integer({ description: "Max wait for the load milestone (default 30000)" })),
-			focus: Type.Optional(Type.Boolean({ description: "Override focus mode for this call" })),
+			timeoutMs: Type.Optional(Type.Integer({ description: "Max wait for waitUntil (default 30000)" })),
+			focus: Type.Optional(Type.Boolean({ description: "Override focus mode" })),
 		}),
 		async execute(params, run) {
 			const action = params.action ?? "goto";

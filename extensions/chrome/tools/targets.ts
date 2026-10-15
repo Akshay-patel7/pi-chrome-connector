@@ -1,7 +1,12 @@
 // Resolve what the model points at (a snapshot ref, a CSS selector, or visible text) to a live
 // DOM object the CDP commands can act on.
+//
+// Selector and text lookups wait for the element: a page that has fired `load` is usually still
+// rendering (data fetched on mount, a dialog animating open), and the call that follows a
+// navigation or a click in the same batch would otherwise run against the app shell.
 
 import type { TabSession } from "../cdp/session.ts";
+import { pageLine } from "./shared.ts";
 
 export interface TargetSpec {
 	ref?: string;
@@ -9,6 +14,11 @@ export interface TargetSpec {
 	text?: string;
 	/** Iframe id, name or URL substring for selector/text lookups. */
 	frame?: string;
+}
+
+export interface ResolveOptions {
+	/** How long to wait for the element to appear; 0 looks once. Default DEFAULT_TIMEOUT_MS. */
+	timeoutMs?: number;
 }
 
 export interface ResolvedTarget {
@@ -19,20 +29,49 @@ export interface ResolvedTarget {
 	description: string;
 	/** How the target was specified, for messages. */
 	label: string;
+	/** Absolute time by which the action on this target must have become possible (ms since epoch). */
+	deadline: number;
 }
+
+/** Default wait for an element to appear and become actionable. */
+export const DEFAULT_TIMEOUT_MS = 5_000;
+export const MAX_TIMEOUT_MS = 120_000;
+const POLL_MS = 100;
+/** Errors from a lookup that raced a navigation; the next poll runs in the new document. */
+const TRANSIENT_LOOKUP = /Cannot find context|context was destroyed|Inspected target navigated|target closed/i;
 
 export function hasTarget(spec: TargetSpec): boolean {
 	return Boolean(spec.ref || spec.selector || spec.text);
 }
 
-export async function resolveTarget(session: TabSession, spec: TargetSpec): Promise<ResolvedTarget> {
-	if (spec.ref) return resolveRef(session, spec.ref);
-	if (spec.selector) return resolveSelector(session, spec.selector, spec.frame);
-	if (spec.text) return resolveText(session, spec.text, spec.frame);
-	throw new Error("Specify the element with ref (from chrome_snapshot/chrome_find), selector (CSS), or text (visible text).");
+export function timeoutFrom(value: number | undefined): number {
+	if (value === undefined || !Number.isFinite(value)) return DEFAULT_TIMEOUT_MS;
+	return Math.min(MAX_TIMEOUT_MS, Math.max(0, Math.floor(value)));
 }
 
-export async function resolveRef(session: TabSession, ref: string): Promise<ResolvedTarget> {
+export async function resolveTarget(session: TabSession, spec: TargetSpec, options: ResolveOptions = {}): Promise<ResolvedTarget> {
+	const timeoutMs = timeoutFrom(options.timeoutMs);
+	if (spec.ref) return resolveRef(session, spec.ref, timeoutMs);
+	if (!spec.selector && !spec.text) throw new Error("Specify the element with ref (from chrome_snapshot/chrome_find), selector (CSS), or text (visible text).");
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		let found: ResolvedTarget | undefined;
+		try {
+			found = spec.selector ? await resolveSelector(session, spec.selector, spec.frame, deadline) : await resolveText(session, spec.text as string, spec.frame, deadline);
+		} catch (error) {
+			if (!TRANSIENT_LOOKUP.test((error as Error).message) || Date.now() >= deadline) throw error;
+		}
+		if (found) return found;
+		if (Date.now() >= deadline) break;
+		await new Promise((resolveSleep) => setTimeout(resolveSleep, POLL_MS));
+	}
+	const waited = timeoutMs > 0 ? ` (waited ${timeoutMs}ms)` : "";
+	const where = spec.frame ? ` in frame ${spec.frame}` : "";
+	if (spec.selector) throw new Error(`No element matches selector ${JSON.stringify(spec.selector)}${where}${waited}. Page: ${pageLine(session)}. Use chrome_find or chrome_snapshot to see what is there.`);
+	throw new Error(`No visible element contains the text ${JSON.stringify(spec.text)}${where}${waited}. Page: ${pageLine(session)}. Try chrome_find (matches accessible names too) or a snapshot ref.`);
+}
+
+export async function resolveRef(session: TabSession, ref: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<ResolvedTarget> {
 	const target = session.refs.get(ref);
 	if (!target) {
 		throw new Error(
@@ -51,7 +90,7 @@ export async function resolveRef(session: TabSession, ref: string): Promise<Reso
 		const { value: connected } = await session.callFunctionOn<boolean>(objectId, "function () { return this.isConnected; }", [], { sessionId: target.sessionId });
 		if (!connected) throw new Error("detached from the document");
 		const description = await describeObject(session, objectId, target.sessionId);
-		return { objectId, sessionId: target.sessionId, backendNodeId: target.backendNodeId, description, label: `ref ${target.ref}` };
+		return { objectId, sessionId: target.sessionId, backendNodeId: target.backendNodeId, description, label: `ref ${target.ref}`, deadline: Date.now() + timeoutMs };
 	} catch (error) {
 		if (objectId) await session.releaseObject(objectId, target.sessionId);
 		session.refs.forget(target.ref);
@@ -59,24 +98,22 @@ export async function resolveRef(session: TabSession, ref: string): Promise<Reso
 	}
 }
 
-export async function resolveSelector(session: TabSession, selector: string, frame?: string): Promise<ResolvedTarget> {
+/** One lookup; undefined when nothing matches right now. */
+async function resolveSelector(session: TabSession, selector: string, frame: string | undefined, deadline: number): Promise<ResolvedTarget | undefined> {
 	const scope = frameScope(session, frame);
 	const handle = await session.evaluateHandle(`(${QUERY_DEEP})(${JSON.stringify(selector)})`, scope);
-	if (!handle.objectId || handle.subtype === "null" || handle.type !== "object") {
-		throw new Error(`No element matches selector ${JSON.stringify(selector)}${frame ? ` in frame ${frame}` : ""}.`);
-	}
+	if (!handle.objectId || handle.subtype === "null" || handle.type !== "object") return undefined;
 	const description = await describeObject(session, handle.objectId, scope.sessionId);
-	return { objectId: handle.objectId, sessionId: scope.sessionId, description, label: `selector ${selector}` };
+	return { objectId: handle.objectId, sessionId: scope.sessionId, description, label: `selector ${selector}`, deadline };
 }
 
-export async function resolveText(session: TabSession, text: string, frame?: string): Promise<ResolvedTarget> {
+/** One lookup; undefined when no visible element contains the text right now. */
+async function resolveText(session: TabSession, text: string, frame: string | undefined, deadline: number): Promise<ResolvedTarget | undefined> {
 	const scope = frameScope(session, frame);
 	const handle = await session.evaluateHandle(`(${FIND_BY_TEXT})(${JSON.stringify(text)})`, scope);
-	if (!handle.objectId || handle.subtype === "null" || handle.type !== "object") {
-		throw new Error(`No visible element contains the text ${JSON.stringify(text)}${frame ? ` in frame ${frame}` : ""}. Try chrome_find or a snapshot ref.`);
-	}
+	if (!handle.objectId || handle.subtype === "null" || handle.type !== "object") return undefined;
 	const description = await describeObject(session, handle.objectId, scope.sessionId);
-	return { objectId: handle.objectId, sessionId: scope.sessionId, description, label: `text "${text}"` };
+	return { objectId: handle.objectId, sessionId: scope.sessionId, description, label: `text "${text}"`, deadline };
 }
 
 export function frameScope(session: TabSession, frame: string | undefined): { contextId?: number; sessionId?: string } {
@@ -162,7 +199,7 @@ const FIND_BY_TEXT = `function (query) {
 			} else if (node instanceof Element) {
 				if (node.shadowRoot) walkText(node.shadowRoot);
 				if (node instanceof HTMLInputElement && (node.type === "button" || node.type === "submit" || node.type === "reset")) consider(node, node.value);
-				const label = node.getAttribute("aria-label") || node.getAttribute("title") || node.getAttribute("placeholder");
+				const label = node.getAttribute("aria-label") || node.getAttribute("title") || node.getAttribute("placeholder") || node.getAttribute("alt");
 				if (label) consider(node, label);
 			}
 		}

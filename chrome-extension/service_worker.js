@@ -15,7 +15,10 @@ const BRIDGE_NAME = "pi-chrome-connector";
 const PROTOCOL_VERSION = 1;
 const CDP_VERSION = "1.3";
 const PROBE_TIMEOUT_MS = 1500;
-const PROBE_BACKOFF_MS = [2000, 4000, 8000, 15000];
+// A new pi session binds a port in the range and its first browser call waits for us, so a port is
+// re-probed every 2 s while this worker is awake. A probe of a dead port is one refused loopback
+// connection: at most 9 ports every 2 s, which costs nothing measurable.
+const PROBE_BACKOFF_MS = [1000, 2000];
 const ALARM_NAME = "pi-chrome-connector-reconnect";
 
 /**
@@ -85,7 +88,7 @@ async function probe(port, state) {
 	ensureConnections();
 }
 
-/** Back off on this port: 2 s after the first miss, then 4, 8, and 15 s between later probes. */
+/** Back off on this port: 1 s after the first miss, then 2 s between later probes. */
 function defer(state) {
 	state.failures += 1;
 	state.nextAttemptAt = Date.now() + PROBE_BACKOFF_MS[Math.min(state.failures, PROBE_BACKOFF_MS.length) - 1];
@@ -377,8 +380,9 @@ chrome.windows.onRemoved.addListener((windowId) => broadcast({ event: "window.re
 
 // ---------------------------------------------------------------------------------------
 // Keep trying to reach pi. Chrome may terminate this worker after 30 s idle; while a socket is
-// open, pi's heartbeat resets that timer (Chrome 116+). The alarm revives the worker otherwise,
-// and a fresh worker probes every port at once (its backoff state starts empty).
+// open, pi's heartbeat resets that timer (Chrome 116+). The alarm revives the worker otherwise
+// (every 30 s, the minimum Chrome allows, and it may fire late), and a fresh worker probes every
+// port at once (its backoff state starts empty). pi waits up to 60 s for that first connection.
 
 chrome.runtime.onInstalled.addListener(() => ensureConnections());
 chrome.runtime.onStartup.addListener(() => ensureConnections());

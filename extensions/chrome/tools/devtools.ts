@@ -25,7 +25,7 @@ const MAX_TEXT_CHARS = 40_000;
 const TARGET_PARAMS = {
 	ref: Type.Optional(Type.String({ description: "Snapshot ref" })),
 	selector: Type.Optional(Type.String({ description: "CSS selector" })),
-	text: Type.Optional(Type.String({ description: "Visible text of the element" })),
+	text: Type.Optional(Type.String({ description: "Visible text" })),
 	frame: Type.Optional(Type.String({ description: "Iframe id, name or URL substring" })),
 };
 
@@ -36,7 +36,7 @@ export function registerDevtoolsTools(pi: ExtensionAPI, services: ToolServices, 
 		name: "chrome_console",
 		label: "Chrome console",
 		description:
-			"Read the current tab's console: console.* calls, uncaught exceptions, and browser messages (network failures, CSP, deprecations). Captured continuously since the tab was attached, across navigations. level filters by minimum severity (error, warning, info, log, all); since returns entries after a #seq you saw before; includes filters by substring; clear empties the buffer. Duplicate consecutive lines collapse with (xN). stack: true adds stack traces for errors.",
+			"Read the current tab's console (console.* calls, uncaught exceptions, browser messages such as network failures and CSP), captured since attach across navigations. level = minimum severity (error, warning, info, log, all); since = entries after a #seq; includes = substring filter; clear empties the buffer; stack: true adds stack traces. Repeated lines collapse with (xN).",
 		promptSnippet: "Read console messages and uncaught errors from the current Chrome tab",
 		promptGuidelines: ["Use chrome_console level=error after reproducing a bug or finishing a flow; a clean console is part of verifying a UI change."],
 		parameters: Type.Object({
@@ -62,7 +62,7 @@ export function registerDevtoolsTools(pi: ExtensionAPI, services: ToolServices, 
 		name: "chrome_network",
 		label: "Chrome network",
 		description:
-			"Inspect network activity of the current tab like the DevTools Network panel: every request since attach (documents, XHR/fetch, scripts, images, WebSocket frames, EventSource messages). Actions: list (filters: urlIncludes, method, status like 404 | 5xx | >=400, type like Fetch | XHR | Document | Image, failedOnly, since #seq, limit); get (one entry by #seq or requestId: headers, post data, timing, response body; credential headers like authorization and cookie are shown redacted); clear; har (write a complete HAR file with captured bodies to path). Bodies of text responses are captured eagerly so they survive navigation. Requests an ad blocker stopped show as BLOCKED(by browser extension); failedOnly includes them.",
+			"Network activity of the current tab since attach, like the DevTools Network panel (documents, XHR/fetch, scripts, images, WebSocket frames, EventSource). Actions: list (filters urlIncludes, method, status like 404 | 5xx | >=400, type like Fetch | Document, failedOnly, since #seq, limit); get one entry by #seq or requestId (headers, post data, timing, response body; credentials redacted); clear; har (write a HAR file with bodies to path). Text bodies are kept across navigations. Ad-blocked requests show as BLOCKED.",
 		promptSnippet: "List or inspect network requests (headers, bodies, failures, HAR export) in the current Chrome tab",
 		promptGuidelines: ["Use chrome_network get to read an API response body or a request payload instead of re-fetching it with JavaScript."],
 		parameters: Type.Object({
@@ -112,7 +112,7 @@ export function registerDevtoolsTools(pi: ExtensionAPI, services: ToolServices, 
 		name: "chrome_route",
 		label: "Chrome route",
 		description:
-			"Intercept requests in the current tab (like DevTools request overrides / Playwright route). add a rule with a URL glob (* matches anything, e.g. */api/users*) and optional method, then either fulfill (status, headers, body -> a mocked response), abort (errorReason e.g. Failed, ConnectionRefused, TimedOut), or continue with extra request headers; delayMs slows the response. Rules capture the requests they matched (method, url, post data) so you can verify what the app sent without it reaching the server. list shows rules with hit counts and captured requests; remove by id; clear removes all.",
+			"Intercept requests in the current tab (like Playwright route): add a rule with a URL glob (*/api/users*) and optional method, then fulfill (status, headers, body: a mocked response), abort (errorReason e.g. Failed, TimedOut), or continue with extra request headers; delayMs slows it. Rules capture matched requests (method, url, post data), so you can see what the app sent without it reaching the server. list shows rules with hits and captures; remove by id; clear removes all.",
 		promptSnippet: "Mock, block, delay or capture requests from the current Chrome tab",
 		promptGuidelines: ["Use chrome_route fulfill/abort to test how the UI handles API failures, slow responses, and specific payloads without changing backend code; use it to capture a destructive POST instead of letting it hit a real server."],
 		parameters: Type.Object({
@@ -124,7 +124,7 @@ export function registerDevtoolsTools(pi: ExtensionAPI, services: ToolServices, 
 			headers: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Response headers (fulfill) or extra request headers (continue)" })),
 			body: Type.Optional(Type.String({ description: "Response body for fulfill (JSON string or text)" })),
 			json: Type.Optional(Type.Unknown({ description: "Response body as JSON for fulfill (sets content-type)" })),
-			errorReason: Type.Optional(Type.String({ description: "abort reason: Failed, Aborted, TimedOut, AccessDenied, ConnectionClosed, ConnectionReset, ConnectionRefused, ConnectionAborted, ConnectionFailed, NameNotResolved, InternetDisconnected, AddressUnreachable, BlockedByClient, BlockedByResponse" })),
+			errorReason: Type.Optional(Type.String({ description: "abort reason, e.g. Failed, TimedOut, ConnectionRefused, NameNotResolved, BlockedByClient" })),
 			delayMs: Type.Optional(Type.Integer()),
 			id: Type.Optional(Type.Integer({ description: "Rule id (remove)" })),
 		}),
@@ -182,13 +182,14 @@ export function registerDevtoolsTools(pi: ExtensionAPI, services: ToolServices, 
 		name: "chrome_dom",
 		label: "Chrome DOM",
 		description:
-			"Inspect DOM details of an element (ref, selector, text) or the document: html (outerHTML, pretty-printed and capped), text (innerText), attributes, styles (computed styles, optionally only the listed properties), rect (bounding box, visibility, scroll position), count (number of matches for selector), listeners (event listeners attached via JavaScript, with source locations).",
+			"Inspect an element (ref, selector, text; waits up to timeoutMs for it) or the document: html (outerHTML, pretty-printed, capped), text (innerText), attributes, styles (computed; optionally only properties), rect (box, visibility, scroll position), count (matches for selector), listeners (JavaScript event listeners with source locations).",
 		promptSnippet: "Read HTML, text, attributes, computed styles, box geometry or event listeners of an element",
 		parameters: Type.Object({
 			action: StringEnum(["html", "text", "attributes", "styles", "rect", "count", "listeners"] as const),
 			...TARGET_PARAMS,
 			properties: Type.Optional(Type.Array(Type.String(), { description: "Computed style properties to include (styles)" })),
 			maxChars: Type.Optional(Type.Integer({ description: "Output cap (default 40000)" })),
+			timeoutMs: Type.Optional(Type.Integer({ description: "Wait for the element, ms (default 5000; 0 = none)" })),
 		}),
 		async execute(params, run) {
 			const session = await connector.currentSession({ focus: false, signal: run.signal });
@@ -199,7 +200,7 @@ export function registerDevtoolsTools(pi: ExtensionAPI, services: ToolServices, 
 				return { text: `${count} element${count === 1 ? "" : "s"} match ${params.selector}` };
 			}
 			const spec: TargetSpec = { ref: params.ref, selector: params.selector, text: params.text, frame: params.frame };
-			const target = hasTarget(spec) ? await resolveTarget(session, spec) : undefined;
+			const target = hasTarget(spec) ? await resolveTarget(session, spec, { timeoutMs: params.timeoutMs }) : undefined;
 			const objectId = target?.objectId ?? (await session.evaluateHandle("document.documentElement")).objectId;
 			if (!objectId) throw new Error("Could not resolve the element.");
 			const sessionId = target?.sessionId;
@@ -246,7 +247,7 @@ export function registerDevtoolsTools(pi: ExtensionAPI, services: ToolServices, 
 		name: "chrome_storage",
 		label: "Chrome storage",
 		description:
-			"Read or change browser storage for the current tab's site: cookies (list/get for the current URL or a given url; set name/value with optional domain, path, expires, httpOnly, secure, sameSite; delete by name; clear all cookies for the site), localStorage and sessionStorage (list/get/set/remove/clear), and clearSite (cookies, storage, cache, service workers for the origin: a clean logged-out state). Useful to reset login state or test as a different user. Values of httpOnly cookies, credential-named keys (token, session, auth, ...) and JWT-shaped values are shown redacted; pass reveal: true when you need the actual value (for example to decode a JWT).",
+			"Read or change storage for the current tab's site: cookies (list/get for the current or a given url; set name/value with domain, path, expires, httpOnly, secure, sameSite; delete by name; clear), localStorage and sessionStorage (list/get/set/remove/clear), and store=site action=clear (cookies, storage, cache, service workers: a clean logged-out state). httpOnly cookies, credential-named keys and JWT-shaped values are redacted; reveal: true shows them.",
 		promptSnippet: "Inspect or reset cookies, localStorage, sessionStorage and site data for the current Chrome tab",
 		parameters: Type.Object({
 			store: StringEnum(["cookies", "localStorage", "sessionStorage", "site"] as const),
@@ -319,7 +320,7 @@ export function registerDevtoolsTools(pi: ExtensionAPI, services: ToolServices, 
 	registerChromeTool(pi, services, {
 		name: "chrome_frames",
 		label: "Chrome frames",
-		description: "List the frames (iframes) in the current tab with ids, names, URLs and whether each runs out-of-process. Use a frame's id, name, or a URL substring as the frame parameter of chrome_snapshot, chrome_find, chrome_click, chrome_fill, chrome_evaluate and chrome_wait.",
+		description: "List the iframes in the current tab (id, name, URL, out-of-process or not). Pass a frame's id, name, or URL substring as the frame parameter of snapshot, find, click, fill, evaluate and wait.",
 		parameters: Type.Object({}),
 		async execute(_params, run) {
 			const session = await connector.currentSession({ focus: false, signal: run.signal });
@@ -333,7 +334,7 @@ export function registerDevtoolsTools(pi: ExtensionAPI, services: ToolServices, 
 		name: "chrome_performance",
 		label: "Chrome performance",
 		description:
-			"Performance snapshot of the current tab: navigation timing (TTFB, DOMContentLoaded, load), Web Vitals observed so far (FCP, LCP, CLS, INP when available), long tasks, resource summary by type (count, bytes), JS heap size, and DOM node count. For a fresh measurement, chrome_navigate first.",
+			"Performance snapshot of the current tab: navigation timing (TTFB, DOMContentLoaded, load), Web Vitals so far (FCP, LCP, CLS, INP), long tasks, resources by type, JS heap size, DOM node count. chrome_navigate first for a fresh measurement.",
 		parameters: Type.Object({}),
 		async execute(_params, run) {
 			const session = await connector.currentSession({ focus: false, signal: run.signal });

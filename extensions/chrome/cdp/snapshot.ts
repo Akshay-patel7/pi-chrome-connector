@@ -327,7 +327,11 @@ export interface FindOptions {
 	limit: number;
 	frameId?: string;
 	sessionId?: string;
+	/** Keep looking this long when nothing matches yet (the page may still be rendering); 0 looks once. */
+	timeoutMs?: number;
 }
+
+const FIND_POLL_MS = 150;
 
 export interface FindMatch {
 	ref?: string;
@@ -335,8 +339,21 @@ export interface FindMatch {
 	context?: string;
 }
 
-/** Search the accessibility tree (or the DOM by selector) and hand back refs. */
+/**
+ * Search the accessibility tree (or the DOM by selector) and hand back refs. Empty results are
+ * retried until timeoutMs: right after a navigation or a click the page often has not rendered the
+ * element yet, and a miss costs the model a whole round trip.
+ */
 export async function findElements(session: TabSession, options: FindOptions): Promise<FindMatch[]> {
+	const deadline = Date.now() + (options.timeoutMs ?? 0);
+	for (;;) {
+		const matches = await findElementsOnce(session, options);
+		if (matches.length > 0 || Date.now() >= deadline) return matches;
+		await new Promise((resolveSleep) => setTimeout(resolveSleep, FIND_POLL_MS));
+	}
+}
+
+async function findElementsOnce(session: TabSession, options: FindOptions): Promise<FindMatch[]> {
 	if (options.selector) return findBySelector(session, options);
 	const snapshot = await buildSnapshot(session, { mode: "full", maxChars: 1, frameId: options.frameId, sessionId: options.sessionId });
 	const text = options.text?.toLowerCase().replace(/\s+/g, " ").trim();

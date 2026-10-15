@@ -10,15 +10,15 @@ export function registerTabsTool(pi: ExtensionAPI, services: ToolServices): void
 		name: "chrome_tabs",
 		label: "Chrome tabs",
 		description:
-			"List Chrome tabs and windows, or manage the tab the connector acts on. Actions: list (all tabs, current tab marked), new (open a tab in the agent window and make it current; optional url), use (make an existing tab current by tabId, urlIncludes or titleIncludes; this is how you act on a tab the user already has open), close (current tab or tabId), focus (bring the current tab's window to the front). All other chrome_* tools act on the current tab.",
+			"List Chrome tabs and windows, or choose the tab the other chrome_* tools act on. Actions: list; new (open a tab in the agent window, optional url); use (an existing tab by tabId, urlIncludes or titleIncludes, e.g. one the user already has open); close (current tab or tabId); focus (bring the current tab's window to the front).",
 		promptSnippet: "List Chrome tabs; open a new tab or point the connector at an existing one",
 		parameters: Type.Object({
 			action: StringEnum(["list", "new", "use", "close", "focus"] as const),
 			url: Type.Optional(Type.String({ description: "URL to open (new)" })),
-			tabId: Type.Optional(Type.Integer({ description: "Tab id from list (use, close)" })),
-			urlIncludes: Type.Optional(Type.String({ description: "Pick the tab whose URL contains this (use)" })),
-			titleIncludes: Type.Optional(Type.String({ description: "Pick the tab whose title contains this (use)" })),
-			focus: Type.Optional(Type.Boolean({ description: "Override focus mode for this call" })),
+			tabId: Type.Optional(Type.Integer({ description: "Tab id (use, close)" })),
+			urlIncludes: Type.Optional(Type.String({ description: "Tab whose URL contains this (use)" })),
+			titleIncludes: Type.Optional(Type.String({ description: "Tab whose title contains this (use)" })),
+			focus: Type.Optional(Type.Boolean({ description: "Override focus mode" })),
 		}),
 		async execute(params, run) {
 			const { connector } = services;
@@ -29,7 +29,8 @@ export function registerTabsTool(pi: ExtensionAPI, services: ToolServices): void
 				}
 				case "new": {
 					const session = await connector.newTab(params.url, { focus: params.focus, signal: run.signal });
-					const loaded = params.url ? await session.waitForFirstDocument(30_000) : true;
+					// waitForFirstDocument waits for the tab to leave about:blank, which a blank tab never does.
+					const loaded = params.url && params.url.trim() !== "about:blank" ? await session.waitForFirstDocument(30_000) : true;
 					const pending = loaded ? "" : " (still loading after 30s; the next action may run against an incomplete page)";
 					// Chrome's tab title event can lag the load; read it from the page so the report is current.
 					const title = loaded ? await session.evaluate<string>("document.title").catch(() => session.title) : session.title;

@@ -12,9 +12,9 @@ export function registerWaitTool(pi: ExtensionAPI, services: ToolServices): void
 		name: "chrome_wait",
 		label: "Chrome wait",
 		description:
-			"Wait for a condition in the current tab, polling every 100 ms until timeoutMs (default 30000). Conditions (give one or more; all must hold): selector with state visible (default) | hidden | attached | detached; text visible on the page; function (JS expression that must return truthy); url substring or /regex/; load milestone load | domcontentloaded | networkidle; timeMs plain delay. Returns as soon as the condition holds, with elapsed time and what changed meanwhile. Use a long timeout to wait for the user to do something in the browser (e.g. log in).",
+			"Wait for a condition in the current tab, polling every 100 ms until timeoutMs (default 30000); all given conditions must hold: selector with state visible (default) | hidden | attached | detached; text visible on the page; function (JS expression returning truthy); url substring or /regex/; load milestone load | domcontentloaded | networkidle; timeMs plain delay. Returns as soon as it holds, with the elapsed time. A long timeout waits for the user (e.g. to log in). Not needed before a find or action: those wait for their element themselves.",
 		promptSnippet: "Wait for a selector, text, JS condition, URL, load state, or the user in Chrome",
-		promptGuidelines: ["After chrome_click on something that loads data asynchronously, use chrome_wait (selector or text) instead of fixed delays or repeated snapshots."],
+		promptGuidelines: ["chrome_wait is for conditions other than an element appearing (a URL change, text, networkidle, a background job); run a long wait on its own, not batched ahead of steps that depend on it."],
 		parameters: Type.Object({
 			selector: Type.Optional(Type.String()),
 			state: Type.Optional(StringEnum(["visible", "hidden", "attached", "detached"] as const)),
