@@ -35,6 +35,10 @@ Built for one workflow: the agent tests and verifies web apps in the browser you
   a 30 s alarm wakes it if it ever sleeps.
 - No authorization gate and no expiry: once the extension is connected, the tools work.
 - The agent gets its own window; your tabs are left alone unless the agent is told to use one.
+  When the connector launches or wakes Chrome, it marks its startup tab with a session-specific
+  local URL. It reuses that window only if it contains just that tab and has the configured size.
+  Otherwise it opens the agent window and removes only its marked startup tab, without leaving
+  an extra empty window or closing your tabs.
 - Agent-created tabs stay open when the session ends so you can inspect the result.
   `/chrome cleanup` closes them.
 

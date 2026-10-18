@@ -12,13 +12,13 @@ export interface ChromeLauncher {
 	/** Human-readable name of the browser being controlled, for messages. */
 	readonly name: string;
 	isRunning(): Promise<boolean>;
-	launch(): Promise<void>;
+	launch(url?: string): Promise<void>;
 	/**
 	 * Ask a running browser to show a window. On macOS Chrome keeps running after its last window
 	 * closes, and an extension only runs while its profile has a window: its service worker is gone
 	 * and the reconnect alarm never fires. Opening a window starts it again within a few seconds.
 	 */
-	activate(): Promise<void>;
+	activate(url?: string): Promise<void>;
 }
 
 export interface SystemLauncherOptions {
@@ -53,33 +53,34 @@ export function createSystemLauncher(options: SystemLauncherOptions): ChromeLaun
 				return false;
 			}
 		},
-		async launch() {
+		async launch(url?: string) {
 			if (platform === "darwin") {
 				const args = ["-a", app];
+				if (url) args.push(url);
 				if (options.args.length > 0) args.push("--args", ...options.args);
 				await execFileAsync("open", args);
 				return;
 			}
 			if (platform === "win32") {
-				spawn("cmd", ["/c", "start", "", app, ...options.args], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+				spawn("cmd", ["/c", "start", "", app, ...options.args, ...(url ? [url] : [])], { detached: true, stdio: "ignore", windowsHide: true }).unref();
 				return;
 			}
 			if (app.includes("/") && !existsSync(app)) throw new Error(`Chrome binary not found at ${app}`);
-			spawn(app, options.args, { detached: true, stdio: "ignore" }).unref();
+			spawn(app, [...options.args, ...(url ? [url] : [])], { detached: true, stdio: "ignore" }).unref();
 		},
-		async activate() {
-			// With Chrome already running, each of these hands off to the running instance, which opens a
-			// window in the last-used profile when it has none and otherwise just comes to the front.
+		async activate(url?: string) {
+			// Hand the URL to the running browser. It opens a window if there is none, or a tab in an
+			// existing window. The connector only adopts a window containing its own startup tab.
 			if (platform === "darwin") {
-				await execFileAsync("open", ["-a", app]).catch(() => {});
+				await execFileAsync("open", ["-a", app, ...(url ? [url] : [])]);
 				return;
 			}
 			if (platform === "win32") {
-				spawn("cmd", ["/c", "start", "", app], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+				spawn("cmd", ["/c", "start", "", app, ...(url ? [url] : [])], { detached: true, stdio: "ignore", windowsHide: true }).unref();
 				return;
 			}
 			if (app.includes("/") && !existsSync(app)) return;
-			spawn(app, [], { detached: true, stdio: "ignore" }).unref();
+			spawn(app, url ? [url] : [], { detached: true, stdio: "ignore" }).unref();
 		},
 	};
 }
@@ -87,6 +88,8 @@ export function createSystemLauncher(options: SystemLauncherOptions): ChromeLaun
 export interface EnsureConnectedOptions {
 	bridge: Bridge;
 	launcher: ChromeLauncher;
+	/** Session-specific landing page identifying the tab opened by launch or activation. */
+	startupUrl?: string;
 	/** How long to wait for the extension after we launched the browser ourselves. */
 	launchTimeoutMs?: number;
 	/**
@@ -114,7 +117,7 @@ export async function ensureConnected(options: EnsureConnectedOptions): Promise<
 	const running = await launcher.isRunning();
 	if (!running) {
 		onProgress?.(`${launcher.name} is not running; launching it`);
-		await launcher.launch();
+		await launcher.launch(options.startupUrl);
 		const client = await bridge.waitForClient(options.launchTimeoutMs ?? 30_000, signal);
 		if (client) return client;
 		throw new Error(
@@ -132,7 +135,7 @@ export async function ensureConnected(options: EnsureConnectedOptions): Promise<
 	const early = await bridge.waitForClient(Math.min(ACTIVATE_AFTER_MS, wakeTimeoutMs), signal);
 	if (early) return early;
 	onProgress?.(`${launcher.name} has not answered in ${ACTIVATE_AFTER_MS / 1000} s; opening a window so its extension runs (an idle worker can also take up to 30 s; giving up after ${Math.round(wakeTimeoutMs / 1000)} s)`);
-	await launcher.activate();
+	await launcher.activate(options.startupUrl);
 	const client = await bridge.waitForClient(Math.max(0, wakeTimeoutMs - ACTIVATE_AFTER_MS), signal);
 	if (client) return client;
 	throw new Error(

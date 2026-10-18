@@ -241,6 +241,15 @@ export class Bridge extends EventEmitter<BridgeEvents> {
 	}
 
 	private onRequest(url: string, response: import("node:http").ServerResponse): void {
+		if (url === "/startup") {
+			response.writeHead(200, {
+				"content-type": "text/html; charset=utf-8",
+				"cache-control": "no-store",
+				"content-security-policy": "default-src 'none'",
+			});
+			response.end("<!doctype html><title>pi-chrome-connector</title>");
+			return;
+		}
 		if (url === "/status") {
 			const body = JSON.stringify({
 				name: BRIDGE_NAME,

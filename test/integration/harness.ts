@@ -189,7 +189,7 @@ export function createTestLauncher(options: TestLauncherOptions = {}): TestLaunc
 		async isRunning() {
 			return child !== undefined && child.exitCode === null;
 		},
-		async launch() {
+		async launch(url?: string) {
 			const args = [
 				`--user-data-dir=${userDataDir}`,
 				`--load-extension=${extensionDir}`,
@@ -204,7 +204,7 @@ export function createTestLauncher(options: TestLauncherOptions = {}): TestLaunc
 			];
 			if (headless) args.push("--headless=new");
 			args.push(...(options.extraArgs ?? []));
-			args.push("about:blank");
+			args.push(url ?? "about:blank");
 			child = spawn(binary, args, { stdio: "ignore" });
 		},
 		async activate() {

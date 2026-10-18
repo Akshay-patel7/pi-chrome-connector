@@ -1,6 +1,7 @@
 // Session-scoped state: the bridge, the connected extension client, attached tab sessions,
 // the dedicated agent window and the current tab. Everything the tools share.
 
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { type ChromeLauncher, ensureConnected } from "./bridge/launch.ts";
 import type { TabInfo, WindowInfo } from "./bridge/protocol.ts";
@@ -41,6 +42,7 @@ export class Connector extends EventEmitter<ConnectorEvents> {
 	private readonly ownedTabIds = new Set<number>();
 	private focusEnabled: boolean;
 	private starting: Promise<Bridge> | undefined;
+	private startupUrl: string | undefined;
 
 	constructor(config: ConnectorConfig, launcher: ChromeLauncher) {
 		super();
@@ -56,6 +58,7 @@ export class Connector extends EventEmitter<ConnectorEvents> {
 		if (!this.starting) {
 			this.starting = Bridge.listen({ portRange: this.config.portRange }).then((bridge) => {
 				this.bridge = bridge;
+				this.startupUrl = `http://127.0.0.1:${bridge.port}/startup#${randomUUID()}`;
 				bridge.on("clientClosed", () => {
 					for (const session of this.sessions.values()) if (session.isClosed) this.sessions.delete(session.tabId);
 				});
@@ -139,6 +142,7 @@ export class Connector extends EventEmitter<ConnectorEvents> {
 		return ensureConnected({
 			bridge,
 			launcher: this.launcher,
+			startupUrl: this.startupUrl,
 			signal,
 			onProgress: (message) => this.emit("progress", message),
 		});
@@ -184,7 +188,27 @@ export class Connector extends EventEmitter<ConnectorEvents> {
 		const target = url ?? "about:blank";
 		let tab: TabInfo;
 		const windowId = await this.resolveAgentWindow(client);
-		if (windowId === undefined) {
+		let startupTab: TabInfo | undefined;
+		let startupWindow: WindowInfo | undefined;
+		if (this.agentWindowId === undefined) {
+			const { tabs } = (await client.request("tabs.list")) as TabListing;
+			startupTab = tabs.find((candidate) => candidate.url === this.startupUrl);
+			if (startupTab) {
+				startupWindow = (await client.request("windows.get", { windowId: startupTab.windowId }).catch(() => undefined)) as WindowInfo | undefined;
+			}
+		}
+		// Only our uniquely marked tab proves ownership. An ordinary blank tab may be the user's.
+		// Create a replacement if the size differs: Chrome can reject resizing an existing window.
+		if (
+			startupTab && startupWindow?.type === "normal" && startupWindow.tabs?.length === 1 &&
+			startupWindow.tabs[0]?.url === this.startupUrl &&
+			startupWindow.width === this.config.window.width && startupWindow.height === this.config.window.height &&
+			(windowId === undefined || windowId === startupWindow.id)
+		) {
+			tab = (await client.request("tabs.update", { tabId: startupTab.id, url: target })) as TabInfo;
+			this.agentWindowId = startupWindow.id;
+			if (focus) await client.request("windows.update", { windowId: startupWindow.id, focused: true });
+		} else if (windowId === undefined) {
 			const created = (await client.request("windows.create", {
 				url: target,
 				focused: focus,
@@ -198,6 +222,12 @@ export class Connector extends EventEmitter<ConnectorEvents> {
 		} else {
 			tab = (await client.request("tabs.create", { url: target, windowId, active: true })) as TabInfo;
 			if (focus) await client.request("windows.update", { windowId, focused: true }).catch(() => {});
+		}
+		if (startupTab && startupTab.id !== tab.id) {
+			// Remove only our landing page when we could not reuse it. Leave it alone if the user has
+			// navigated it since the lookup.
+			const latest = (await client.request("tabs.get", { tabId: startupTab.id }).catch(() => undefined)) as TabInfo | undefined;
+			if (latest?.url === this.startupUrl) await client.request("tabs.remove", { tabIds: [startupTab.id] });
 		}
 		this.ownedTabIds.add(tab.id);
 		this.currentTabId = tab.id;
