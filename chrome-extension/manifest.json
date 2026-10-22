@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "pi-chrome-connector",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Lets the pi coding agent drive this Chrome profile through a local bridge on 127.0.0.1. All automation logic runs inside pi.",
   "minimum_chrome_version": "125",
   "permissions": [

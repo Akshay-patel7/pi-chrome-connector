@@ -33,7 +33,6 @@ interface PointResult extends Point {
 	error?: string;
 }
 
-const SETTLE_MS = 150;
 const NAVIGATION_WAIT_MS = 10_000;
 /** Actionability (visible, uncovered, enabled) is rechecked at least this long even with timeoutMs 0. */
 const MIN_ACTIONABILITY_MS = 600;
@@ -109,7 +108,7 @@ export function registerInteractionTools(pi: ExtensionAPI, services: ToolService
 			} else {
 				throw new Error("Give an element (ref, selector, or text) or a point (x and y).");
 			}
-			await sleep(SETTLE_MS);
+			await waitForPaint(session);
 			return { text: joinLines(`Hovering ${where}.`, describeDelta(session, mark)) };
 		},
 	});
@@ -428,7 +427,7 @@ async function mouseClick(session: TabSession, point: Point, options: { button: 
 async function wheel(session: TabSession, point: Point, deltaX: number, deltaY: number, sessionId?: string): Promise<void> {
 	await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y }, { sessionId });
 	await session.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: point.x, y: point.y, deltaX, deltaY }, { sessionId });
-	await sleep(300);
+	await waitForPaint(session, sessionId, true);
 }
 
 /**
@@ -437,11 +436,33 @@ async function wheel(session: TabSession, point: Point, deltaX: number, deltaY: 
  * report names the page the user ends up on rather than the one they left.
  */
 export async function settle(session: TabSession, mark: StateMark): Promise<void> {
-	await sleep(SETTLE_MS);
+	if (session.navigationStarts === mark.navigationStarts && session.navigationCount === mark.navigationCount) await waitForPaint(session);
 	const started = session.navigationStarts !== mark.navigationStarts;
 	const committed = session.navigationCount !== mark.navigationCount;
 	if (started || committed || (!session.hasLoaded && !session.isClosed)) {
 		await session.waitForLifecycle("load", NAVIGATION_WAIT_MS, { afterNavigation: committed || started ? mark.navigationCount : undefined }).catch(() => false);
+	}
+}
+
+/** Let input handlers and two animation frames finish, without a fixed pause on every action.
+ * Scroll events reset the frame count until the compositor stops moving. The timer bounds hidden
+ * pages where rAF is throttled; this is not a claim that arbitrary asynchronous app work finished.
+ */
+async function waitForPaint(session: TabSession, sessionId?: string, scrolling = false): Promise<void> {
+	if (session.dialog || session.isClosed) return;
+	try {
+		await session.evaluate(`new Promise((resolve) => {
+			let frame, frames = 0;
+			const onScroll = () => { frames = 0; };
+			const done = () => { clearTimeout(timer); cancelAnimationFrame(frame); removeEventListener('scroll', onScroll, true); resolve(); };
+			const tick = () => { if (++frames >= 2) done(); else frame = requestAnimationFrame(tick); };
+			const timer = setTimeout(done, ${scrolling ? 300 : 100});
+			${scrolling ? "addEventListener('scroll', onScroll, { capture: true, passive: true });" : ""}
+			frame = requestAnimationFrame(tick);
+		})`, { sessionId, timeoutMs: 1_000 });
+	} catch (error) {
+		// A navigation can destroy the execution context while the render wait is pending.
+		if (!session.dialog && !session.isClosed && !/context.*destroyed|Cannot find context|Inspected target navigated/i.test((error as Error).message)) throw error;
 	}
 }
 

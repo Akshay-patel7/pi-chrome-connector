@@ -114,6 +114,14 @@ fired `load` is usually still rendering, so without this the call after a naviga
 ran against the app shell and missed. A miss reports how long it waited and which page it was
 looking at.
 
+Actions wait for rendering rather than a fixed pause; scrolling also waits for scroll activity
+to settle. Navigation waits remain in place. Use `chrome_wait` for asynchronous application work
+such as a delayed API response.
+
+Scoped snapshots query the accessibility subtree. A single native control avoids full-page
+layout capture; container scopes retain it to detect click handlers. CSS-selector searches avoid
+the accessibility tree and describe matches in parallel while preserving their order.
+
 Every action reports what changed since it started: navigation, new console errors, failed
 requests, open dialogs. Requests an ad blocker stopped, requests the page canceled itself, and
 requests a `chrome_route` rule aborted are counted apart from real failures, so telemetry noise

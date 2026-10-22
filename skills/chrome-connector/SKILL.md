@@ -56,13 +56,17 @@ backend, not a reason to retry the navigation.
 
 ## Locating elements
 
-Prefer refs from `chrome_snapshot` / `chrome_find`. Fall back to `text` (visible label) and then
-`selector`. Refs are tied to DOM nodes: they survive re-renders that keep the node, and die on
+Prefer refs from `chrome_snapshot` / `chrome_find`. Use a known, specific CSS selector for a
+targeted read or action; use `text` when the visible label is the reliable locator. Refs are tied
+to DOM nodes: they survive re-renders that keep the node, and die on
 navigation or when a framework replaces the node. "Ref is no longer in the DOM" means take a new
 snapshot, it does not mean the element is gone.
 
-`chrome_find text="Save"` is cheaper than a full snapshot when you know what you want.
-`chrome_snapshot selector="#dialog"` scopes to one region. `mode: "full"` includes plain text.
+`chrome_find selector="#save"` avoids the full accessibility/layout capture used by text and
+role searches. `chrome_snapshot selector="#dialog"` requests only that accessibility subtree;
+a single native control also avoids full-page layout capture. `mode: "full"` includes plain text.
+Actions wait for rendering, not arbitrary asynchronous work. Use `chrome_wait` for delayed
+responses and application state changes.
 
 ## Forms and login
 

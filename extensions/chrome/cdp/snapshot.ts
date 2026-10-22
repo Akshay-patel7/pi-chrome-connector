@@ -67,12 +67,37 @@ const BOOL_PROPS = ["disabled", "expanded", "selected", "pressed", "required", "
 
 export async function buildSnapshot(session: TabSession, options: SnapshotOptions): Promise<SnapshotResult> {
 	const send = { sessionId: options.sessionId, timeoutMs: 30_000 };
-	const [axTree, domSnapshot, metrics] = await Promise.all([
-		session.send("Accessibility.getFullAXTree", { frameId: options.frameId }, send),
-		session.send("DOMSnapshot.captureSnapshot", { computedStyles: [], includeDOMRects: true }, send).catch(() => undefined),
-		session.send("Page.getLayoutMetrics", undefined, send).catch(() => undefined),
-	]);
-	const layout = indexLayout(domSnapshot, metrics);
+	const scoped = options.scopeBackendNodeId;
+	const treeRequest = scoped === undefined
+		? session.send("Accessibility.getFullAXTree", { frameId: options.frameId }, send)
+		: session.send("Accessibility.queryAXTree", { backendNodeId: scoped }, send);
+	// Scoped reads ask Chrome for the subtree, not a full tree trimmed after transfer. A single
+	// native control needs only its own box; containers still use DOMSnapshot for click listeners.
+	const readLayout = async () => {
+		const [domSnapshot, metrics] = await Promise.all([
+			session.send("DOMSnapshot.captureSnapshot", { computedStyles: [], includeDOMRects: true }, send).catch(() => undefined),
+			session.send("Page.getLayoutMetrics", undefined, send).catch(() => undefined),
+		]);
+		return indexLayout(domSnapshot, metrics);
+	};
+	const fullLayout = scoped === undefined ? readLayout() : undefined;
+	const axTree = await treeRequest;
+	const scopeRoot = scoped === undefined ? undefined : axTree.nodes.find((node) => node.backendDOMNodeId === scoped);
+	let layout: Map<number, Geometry>;
+	if (scopeRoot && LEAF_ROLES.has(String(scopeRoot.role?.value)) && INTERACTIVE_ROLES.has(String(scopeRoot.role?.value))) {
+		const resolved = await session.send("DOM.resolveNode", { backendNodeId: scoped }, send);
+		const objectId = resolved.object.objectId;
+		if (!objectId) throw new Error("The scope element was removed while reading its layout.");
+		try {
+			const { value: offscreen } = await session.callFunctionOn<boolean>(objectId, `function () {
+				const r = this.getBoundingClientRect(), w = this.ownerDocument.defaultView;
+				return r.width > 0 && r.height > 0 && (r.right <= 0 || r.bottom <= 0 || r.left >= w.innerWidth || r.top >= w.innerHeight);
+			}`, [], send);
+			layout = new Map([[scoped!, { offscreen, clickable: false }]]);
+		} finally { await session.releaseObject(objectId, options.sessionId); }
+	} else {
+		layout = await (fullLayout ?? readLayout());
+	}
 	const byId = new Map<string, Protocol.Accessibility.AXNode>();
 	for (const node of axTree.nodes) byId.set(node.nodeId, node);
 	const root = axTree.nodes.find((node) => !node.parentId) ?? axTree.nodes[0];
@@ -385,16 +410,21 @@ async function findBySelector(session: TabSession, options: FindOptions): Promis
 	if (!list.objectId) return [];
 	try {
 		const { result } = await session.send("Runtime.getProperties", { objectId: list.objectId, ownProperties: true }, send);
-		const matches: FindMatch[] = [];
-		for (const property of result) {
-			if (!/^\d+$/.test(property.name) || !property.value?.objectId) continue;
-			const described = await session.send("DOM.describeNode", { objectId: property.value.objectId }, send);
-			const { value: line } = await session.callFunctionOn<string>(property.value.objectId, DESCRIBE_FOR_FIND, [], { sessionId: options.sessionId });
-			const ref = session.refs.assign({ backendNodeId: described.node.backendNodeId, sessionId: options.sessionId, frameId: options.frameId, role: described.node.localName }).ref;
-			matches.push({ ref, line: `- ${line} [${ref}]` });
-			await session.releaseObject(property.value.objectId, options.sessionId);
-		}
-		return matches;
+		const objects = result.filter((property) => /^\d+$/.test(property.name) && property.value?.objectId);
+		const described = await Promise.all(objects.map(async (property) => {
+			const objectId = property.value!.objectId!;
+			try {
+				const [node, line] = await Promise.all([
+					session.send("DOM.describeNode", { objectId }, send),
+					session.callFunctionOn<string>(objectId, DESCRIBE_FOR_FIND, [], send),
+				]);
+				return { node: node.node, line: line.value };
+			} finally { await session.releaseObject(objectId, options.sessionId); }
+		}));
+		return described.map(({ node, line }) => {
+			const ref = session.refs.assign({ backendNodeId: node.backendNodeId, sessionId: options.sessionId, frameId: options.frameId, role: node.localName }).ref;
+			return { ref, line: `- ${line} [${ref}]` };
+		});
 	} finally {
 		await session.releaseObject(list.objectId, options.sessionId);
 	}

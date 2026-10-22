@@ -43,6 +43,8 @@ for (const scale of [1, 1.5, 2]) {
 			assert.match(snapshot, /- editable "editable text" \[e\d+\]\n/, "control at y≈400 is not marked offscreen");
 			assert.match(snapshot, /- button "Submit form" \[e\d+\]\n/, "control at y≈360 is not marked offscreen");
 			assert.match(snapshot, /- button "Far button" \[e\d+\] \[offscreen\]/, "control at y≈2700 is marked offscreen");
+			const scoped = (await pi.callTool("chrome_snapshot", { selector: "#far-button" })).text;
+			assert.match(scoped, /- button "Far button" \[e\d+\] \[offscreen\]/, "targeted geometry also uses CSS pixels");
 			// The screenshot pipeline scales the other way (device -> CSS); at scale 1 it must agree with the viewport.
 			const shot = await pi.callTool("chrome_screenshot", { returnImage: false, scale: 1 });
 			const viewport = JSON.parse((await pi.callTool("chrome_evaluate", { expression: "({ w: innerWidth, h: innerHeight })" })).text.split("\nSince: ")[0] as string) as { w: number; h: number };
